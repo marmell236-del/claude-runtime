@@ -1,5 +1,5 @@
 const http = require("http");
-const { spawn, execFile } = require("child_process");
+const { execFile, spawn } = require("child_process");
 const { URL } = require("url");
 
 const PORT = process.env.PORT || 3000;
@@ -10,29 +10,13 @@ let authorizationUrl = "";
 let loginState = "idle";
 let loginError = "";
 
-// Escape text before putting it into HTML.
-function escapeHtml(value) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-// Remove likely OAuth/security values before displaying diagnostics.
-function sanitize(text) {
-  if (!text) return "";
-
-  return String(text)
-    .replace(
-      /(code|access_token|refresh_token|id_token|client_secret|code_verifier|code_challenge|state)=([^&\s]+)/gi,
-      "$1=[REDACTED]"
-    )
-    .replace(
-      /("?(?:access_token|refresh_token|id_token|client_secret|code_verifier|code_challenge|state)"?\s*[:=]\s*")([^"]+)(")/gi,
-      "$1[REDACTED]$3"
-    );
+function escapeHtml(value = "") {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function html(body) {
@@ -97,15 +81,13 @@ function html(body) {
 }
 
 function extractAuthorizationUrl(text) {
-  const matches = String(text || "").match(/https?:\/\/[^\s"'<>]+/g) || [];
+  const matches = text.match(/https?:\/\/[^\s"'<>]+/g) || [];
 
   for (const candidate of matches) {
-    const lower = candidate.toLowerCase();
-
     if (
-      lower.includes("robinhood") ||
-      lower.includes("oauth") ||
-      lower.includes("authorize")
+      candidate.includes("robinhood") ||
+      candidate.includes("oauth") ||
+      candidate.includes("authorize")
     ) {
       return candidate.replace(/[),.;]+$/, "");
     }
@@ -114,9 +96,24 @@ function extractAuthorizationUrl(text) {
   return "";
 }
 
+function consumeLoginOutput(text) {
+  loginOutput += text;
+
+  console.log(
+    "[CLAUDE LOGIN]",
+    text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "")
+  );
+
+  const found = extractAuthorizationUrl(loginOutput);
+
+  if (found) {
+    authorizationUrl = found;
+    loginState = "waiting_for_authorization";
+  }
+}
+
 function startLogin() {
   if (loginProcess) {
-    console.log("[AUTH] Login already running.");
     return;
   }
 
@@ -125,116 +122,64 @@ function startLogin() {
   loginError = "";
   loginState = "starting";
 
-  console.log("[AUTH] Starting Claude MCP login.");
-  console.log(
-    "[AUTH] Command: claude mcp login robinhood-trading --no-browser"
+  /*
+   * `script` creates a real pseudo-terminal.
+   *
+   * Claude Code MCP authentication checks whether stdin is attached
+   * to a terminal. Ordinary child_process pipes fail that check.
+   *
+   * script -q -f -c COMMAND /dev/null
+   * runs Claude inside a PTY while still allowing Node to communicate
+   * with the process.
+   */
+
+  const command =
+    "claude mcp login robinhood-trading --no-browser";
+
+  loginProcess = spawn(
+    "script",
+    [
+      "-q",
+      "-f",
+      "-c",
+      command,
+      "/dev/null"
+    ],
+    {
+      env: {
+        ...process.env,
+        TERM: "xterm-256color"
+      },
+      stdio: [
+        "pipe",
+        "pipe",
+        "pipe"
+      ]
+    }
   );
 
-  try {
-    loginProcess = spawn(
-      "claude",
-      [
-        "mcp",
-        "login",
-        "robinhood-trading",
-        "--no-browser"
-      ],
-      {
-        env: {
-          ...process.env,
-          HOME: process.env.HOME || "/root",
-          PATH:
-            process.env.PATH ||
-            "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-        },
-        cwd: "/app",
-        stdio: ["pipe", "pipe", "pipe"]
-      }
-    );
-  } catch (err) {
-    loginState = "error";
-    loginError = `Failed to start Claude: ${err.message}`;
-    console.error("[AUTH]", loginError);
-    loginProcess = null;
-    return;
-  }
-
-  console.log(`[AUTH] Claude PID: ${loginProcess.pid}`);
-
-  function consume(source, data) {
-    const raw = data.toString();
-    loginOutput += raw;
-
-    // Log diagnostic output, but sanitize likely OAuth secrets.
-    const safe = sanitize(raw);
-
-    if (safe.trim()) {
-      console.log(`[AUTH ${source}] ${safe.trimEnd()}`);
-    }
-
-    if (!authorizationUrl) {
-      const found = extractAuthorizationUrl(loginOutput);
-
-      if (found) {
-        authorizationUrl = found;
-        loginState = "waiting_for_authorization";
-
-        // Do not print the authorization URL to Railway logs.
-        console.log("[AUTH] Authorization URL detected.");
-        console.log("[AUTH] Waiting for user authorization.");
-      }
-    }
-  }
-
   loginProcess.stdout.on("data", data => {
-    consume("STDOUT", data);
+    consumeLoginOutput(data.toString());
   });
 
   loginProcess.stderr.on("data", data => {
-    consume("STDERR", data);
-  });
-
-  loginProcess.stdin.on("error", err => {
-    console.error(
-      `[AUTH STDIN ERROR] ${sanitize(err.message)}`
-    );
+    consumeLoginOutput(data.toString());
   });
 
   loginProcess.on("error", err => {
-    loginError = `Claude process error: ${err.message}`;
+    loginError = err.message;
     loginState = "error";
-
-    console.error(
-      `[AUTH PROCESS ERROR] ${sanitize(err.message)}`
-    );
-
     loginProcess = null;
   });
 
-  loginProcess.on("close", (code, signal) => {
-    console.log(
-      `[AUTH] Claude process closed. code=${code} signal=${signal || "none"}`
-    );
-
+  loginProcess.on("close", code => {
     if (code === 0) {
       loginState = "completed";
-      loginError = "";
-
-      console.log("[AUTH] Robinhood MCP login completed.");
     } else if (loginState !== "error") {
       loginState = "failed";
 
-      const diagnostic = sanitize(loginOutput).trim();
-
       loginError =
-        `Claude exited with code ${code}.` +
-        (signal ? ` Signal: ${signal}.` : "") +
-        (diagnostic
-          ? `\n\nClaude output:\n${diagnostic}`
-          : "\n\nClaude produced no stdout/stderr output.");
-
-      console.error("[AUTH] Login failed.");
-      console.error(sanitize(loginError));
+        `Claude PTY process exited with code ${code}.`;
     }
 
     loginProcess = null;
@@ -247,52 +192,38 @@ function submitRedirect(redirectUrl) {
     !loginProcess.stdin ||
     loginProcess.stdin.destroyed
   ) {
-    console.error(
-      "[AUTH] Redirect submitted but no active Claude process exists."
-    );
-
     return false;
   }
 
   loginState = "submitting_redirect";
 
-  console.log(
-    "[AUTH] Redirect received from browser. Sending it to Claude."
-  );
+  /*
+   * Send the redirect URL back through the PTY.
+   */
 
-  // Never print the redirect URL because it can contain OAuth credentials.
-  loginProcess.stdin.write(redirectUrl.trim() + "\n");
+  loginProcess.stdin.write(
+    redirectUrl.trim() + "\n"
+  );
 
   return true;
 }
 
 function checkMcp(callback) {
-  console.log("[STATUS] Checking Robinhood MCP configuration.");
-
   execFile(
     "claude",
-    ["mcp", "get", "robinhood-trading"],
+    [
+      "mcp",
+      "get",
+      "robinhood-trading"
+    ],
     {
-      env: {
-        ...process.env,
-        HOME: process.env.HOME || "/root"
-      },
-      cwd: "/app"
+      env: process.env
     },
     (error, stdout, stderr) => {
-      const output = `${stdout || ""}${stderr || ""}`;
-
-      if (error) {
-        console.error(
-          `[STATUS] MCP check error: ${sanitize(error.message)}`
-        );
-      }
-
-      console.log(
-        `[STATUS] MCP check completed.\n${sanitize(output)}`
+      callback(
+        error,
+        `${stdout || ""}${stderr || ""}`
       );
-
-      callback(error, sanitize(output));
     }
   );
 }
@@ -300,37 +231,56 @@ function checkMcp(callback) {
 const server = http.createServer((req, res) => {
   const url = new URL(
     req.url,
-    `http://${req.headers.host || "localhost"}`
+    `http://${req.headers.host}`
   );
 
+  /*
+   * HEALTH
+   */
+
   if (url.pathname === "/health") {
-    res.writeHead(200, {
-      "Content-Type": "application/json"
-    });
+    res.writeHead(
+      200,
+      {
+        "Content-Type": "application/json"
+      }
+    );
 
     res.end(
       JSON.stringify({
         status: "ok",
         service: "claude-robinhood-runtime",
         login_state: loginState,
-        login_process_active: Boolean(loginProcess),
-        authorization_url_detected: Boolean(authorizationUrl)
+        authorization_url_ready:
+          Boolean(authorizationUrl)
       })
     );
 
     return;
   }
 
+  /*
+   * START AUTHENTICATION
+   */
+
   if (url.pathname === "/auth/start") {
     startLogin();
 
-    res.writeHead(302, {
-      Location: "/auth"
-    });
+    res.writeHead(
+      302,
+      {
+        Location: "/auth"
+      }
+    );
 
     res.end();
+
     return;
   }
+
+  /*
+   * SUBMIT REDIRECT URL
+   */
 
   if (
     url.pathname === "/auth/submit" &&
@@ -340,15 +290,11 @@ const server = http.createServer((req, res) => {
 
     req.on("data", chunk => {
       body += chunk.toString();
-
-      // Prevent accidentally accepting huge request bodies.
-      if (body.length > 20000) {
-        req.destroy();
-      }
     });
 
     req.on("end", () => {
-      const params = new URLSearchParams(body);
+      const params =
+        new URLSearchParams(body);
 
       const redirectUrl =
         params.get("redirect_url") || "";
@@ -357,9 +303,12 @@ const server = http.createServer((req, res) => {
         !redirectUrl.startsWith("http://") &&
         !redirectUrl.startsWith("https://")
       ) {
-        res.writeHead(400, {
-          "Content-Type": "text/html"
-        });
+        res.writeHead(
+          400,
+          {
+            "Content-Type": "text/html"
+          }
+        );
 
         res.end(
           html(`
@@ -367,7 +316,9 @@ const server = http.createServer((req, res) => {
               Invalid redirect URL.
             </div>
 
-            <a href="/auth">Back</a>
+            <a href="/auth">
+              Back
+            </a>
           `)
         );
 
@@ -378,9 +329,12 @@ const server = http.createServer((req, res) => {
         submitRedirect(redirectUrl);
 
       if (!accepted) {
-        res.writeHead(409, {
-          "Content-Type": "text/html"
-        });
+        res.writeHead(
+          409,
+          {
+            "Content-Type": "text/html"
+          }
+        );
 
         res.end(
           html(`
@@ -397,9 +351,12 @@ const server = http.createServer((req, res) => {
         return;
       }
 
-      res.writeHead(302, {
-        Location: "/auth"
-      });
+      res.writeHead(
+        302,
+        {
+          Location: "/auth"
+        }
+      );
 
       res.end();
     });
@@ -407,71 +364,91 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  /*
+   * AUTHENTICATION PAGE
+   */
+
   if (url.pathname === "/auth") {
     let authorizationBlock = "";
 
     if (authorizationUrl) {
       authorizationBlock = `
         <div class="box">
+
           <h2>Step 1</h2>
 
           <p>
-            Open Robinhood authorization:
+            Claude generated the Robinhood
+            authorization URL.
           </p>
 
           <p>
             <a
               href="${escapeHtml(authorizationUrl)}"
-              rel="noreferrer"
+              target="_blank"
+              rel="noopener noreferrer"
             >
-              Open Robinhood Authorization
+              <button>
+                Open Robinhood Authorization
+              </button>
             </a>
           </p>
+
         </div>
 
         <div class="box">
+
           <h2>Step 2</h2>
 
           <p>
-            After Robinhood redirects you, copy the complete
-            redirect URL from your browser and paste it here.
+            Complete authorization with Robinhood.
           </p>
 
           <p>
-            Do not paste that redirect URL into chat or anywhere
-            else.
+            When Robinhood redirects your browser
+            to localhost, copy the COMPLETE URL
+            from the browser address bar.
+          </p>
+
+          <p>
+            Paste that URL below.
           </p>
 
           <form
             method="POST"
             action="/auth/submit"
           >
+
             <input
               name="redirect_url"
               type="text"
               autocomplete="off"
-              placeholder="Paste complete redirect URL"
+              placeholder="http://localhost:.../?code=..."
               required
             >
 
             <button type="submit">
               Complete Authentication
             </button>
+
           </form>
+
         </div>
       `;
     }
 
-    let actionBlock = "";
+    let retryBlock = "";
 
     if (
       loginState === "idle" ||
       loginState === "failed" ||
       loginState === "error"
     ) {
-      actionBlock = `
+      retryBlock = `
         <div class="box">
+
           <a href="/auth/start">
+
             <button>
               ${
                 loginState === "idle"
@@ -479,7 +456,9 @@ const server = http.createServer((req, res) => {
                   : "Retry Robinhood Login"
               }
             </button>
+
           </a>
+
         </div>
       `;
     }
@@ -489,60 +468,136 @@ const server = http.createServer((req, res) => {
     if (loginError) {
       errorBlock = `
         <div class="box">
-          <strong>Diagnostic Error:</strong>
 
-          <pre>${escapeHtml(sanitize(loginError))}</pre>
+          <strong>
+            Diagnostic Error:
+          </strong>
+
+          <pre>
+${escapeHtml(loginError)}
+
+Claude output:
+
+${escapeHtml(loginOutput)}
+          </pre>
+
         </div>
       `;
     }
 
-    res.writeHead(200, {
-      "Content-Type": "text/html",
-      "Cache-Control": "no-store"
-    });
+    let waitingBlock = "";
+
+    if (
+      loginState === "starting" &&
+      !authorizationUrl
+    ) {
+      waitingBlock = `
+        <div class="box">
+
+          Claude is starting the
+          Robinhood OAuth flow.
+
+          <p>
+            Refresh this page in a few seconds.
+          </p>
+
+        </div>
+      `;
+    }
+
+    let completedBlock = "";
+
+    if (loginState === "completed") {
+      completedBlock = `
+        <div class="box">
+
+          <h2>
+            Authentication process completed.
+          </h2>
+
+          <p>
+            Check MCP status below.
+          </p>
+
+        </div>
+      `;
+    }
+
+    res.writeHead(
+      200,
+      {
+        "Content-Type": "text/html"
+      }
+    );
 
     res.end(
       html(`
+
         <div class="box">
           <strong>Status:</strong>
           ${escapeHtml(loginState)}
         </div>
 
-        ${actionBlock}
+        ${retryBlock}
+
+        ${waitingBlock}
 
         ${authorizationBlock}
+
+        ${completedBlock}
 
         ${errorBlock}
 
         <div class="box">
+
           <a href="/status">
             Check MCP Status
           </a>
+
         </div>
+
       `)
     );
 
     return;
   }
 
+  /*
+   * MCP STATUS
+   */
+
   if (url.pathname === "/status") {
     checkMcp((error, output) => {
-      res.writeHead(200, {
-        "Content-Type": "text/html",
-        "Cache-Control": "no-store"
-      });
+      res.writeHead(
+        200,
+        {
+          "Content-Type": "text/html"
+        }
+      );
 
       res.end(
         html(`
-          <div class="box">
-            <h2>Robinhood MCP Status</h2>
 
-            <pre>${escapeHtml(output)}</pre>
+          <div class="box">
+
+            <h2>
+              Robinhood MCP Status
+            </h2>
+
+            <pre>
+${escapeHtml(output)}
+            </pre>
+
           </div>
 
-          <a href="/auth">
-            Authentication
-          </a>
+          <div class="box">
+
+            <a href="/auth">
+              Authentication
+            </a>
+
+          </div>
+
         `)
       );
     });
@@ -550,23 +605,34 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  res.writeHead(200, {
-    "Content-Type": "text/html",
-    "Cache-Control": "no-store"
-  });
+  /*
+   * HOME
+   */
+
+  res.writeHead(
+    200,
+    {
+      "Content-Type": "text/html"
+    }
+  );
 
   res.end(
     html(`
+
       <div class="box">
+
         <p>
-          Claude Code Robinhood MCP runtime is online.
+          Claude Code Robinhood MCP runtime
+          is online.
         </p>
 
         <p>
           <a href="/auth">
+
             <button>
               Robinhood Authentication
             </button>
+
           </a>
         </p>
 
@@ -575,13 +641,19 @@ const server = http.createServer((req, res) => {
             MCP Status
           </a>
         </p>
+
       </div>
+
     `)
   );
 });
 
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(
-    `Claude Robinhood runtime listening on port ${PORT}`
-  );
-});
+server.listen(
+  PORT,
+  "0.0.0.0",
+  () => {
+    console.log(
+      `Claude Robinhood runtime listening on port ${PORT}`
+    );
+  }
+);
