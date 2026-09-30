@@ -5,26 +5,48 @@ const crypto = require("crypto");
 
 const PORT = process.env.PORT || 3000;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+const SCANNER_BRIDGE_TOKEN =
+  process.env.SCANNER_BRIDGE_TOKEN || "";
 
 if (!ADMIN_PASSWORD) {
   console.error("FATAL: ADMIN_PASSWORD is not configured.");
   process.exit(1);
 }
 
-/*
- * Create a server-side-derived session token.
- * The actual ADMIN_PASSWORD is never stored in the browser.
- */
+if (!SCANNER_BRIDGE_TOKEN) {
+  console.error(
+    "FATAL: SCANNER_BRIDGE_TOKEN is not configured."
+  );
+  process.exit(1);
+}
+
 const SESSION_TOKEN = crypto
   .createHmac("sha256", ADMIN_PASSWORD)
   .update("claude-robinhood-admin-session-v1")
   .digest("hex");
+
+/*
+ * IMPORTANT:
+ * Scanner-to-Robinhood execution is intentionally disabled.
+ */
+const BRIDGE_EXECUTION_ENABLED = false;
 
 let loginProcess = null;
 let loginOutput = "";
 let authorizationUrl = "";
 let loginState = "idle";
 let loginError = "";
+
+/*
+ * Latest signal received from the Alpaca scanner.
+ * This is intentionally memory-only for this first test.
+ */
+let bridgeState = {
+  received_count: 0,
+  last_received_at: null,
+  last_signal: null,
+  last_error: null,
+};
 
 function escapeHtml(value = "") {
   return String(value)
@@ -90,6 +112,10 @@ function html(body) {
     .error {
       color: #ff6961;
     }
+
+    .good {
+      color: #70d67b;
+    }
   </style>
 </head>
 
@@ -138,11 +164,31 @@ function safeEqual(a, b) {
 
 function isAuthenticated(req) {
   const cookies = parseCookies(req);
-  const supplied = cookies.admin_session || "";
+  const supplied =
+    cookies.admin_session || "";
 
   return safeEqual(
     supplied,
     SESSION_TOKEN
+  );
+}
+
+function isBridgeAuthenticated(req) {
+  const authorization =
+    req.headers.authorization || "";
+
+  const prefix = "Bearer ";
+
+  if (!authorization.startsWith(prefix)) {
+    return false;
+  }
+
+  const supplied =
+    authorization.slice(prefix.length);
+
+  return safeEqual(
+    supplied,
+    SCANNER_BRIDGE_TOKEN
   );
 }
 
@@ -176,6 +222,23 @@ function requireAuth(req, res) {
 
   redirect(res, "/login");
   return false;
+}
+
+function sendJson(res, status, payload) {
+  const body = JSON.stringify(
+    payload,
+    null,
+    2
+  );
+
+  res.writeHead(status, {
+    "Content-Type": "application/json",
+    "Cache-Control": "no-store",
+    "Content-Length":
+      Buffer.byteLength(body)
+  });
+
+  res.end(body);
 }
 
 function normalizeClaudeOutput(text) {
@@ -286,10 +349,6 @@ function startLogin() {
 
     inspectLoginOutput();
 
-    /*
-     * Do not print OAuth URLs or callback
-     * parameters into Railway logs.
-     */
     const safeText = text
       .replace(
         /https?:\/\/[^\s"'<>]+/gi,
@@ -340,11 +399,6 @@ function startLogin() {
         loginState !== "completed"
       ) {
         loginState = "failed";
-
-        /*
-         * Avoid exposing the full OAuth
-         * transcript to the browser.
-         */
         loginError =
           `Claude exited with code ${code}.`;
       }
@@ -455,6 +509,119 @@ unavailable.
   );
 }
 
+/*
+ * Validate and store a scanner signal.
+ *
+ * NO Claude call occurs here.
+ * NO Robinhood tool occurs here.
+ * NO order can be submitted here.
+ */
+function acceptBridgeSignal(payload) {
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    Array.isArray(payload)
+  ) {
+    throw new Error(
+      "Payload must be a JSON object."
+    );
+  }
+
+  const symbol =
+    String(payload.symbol || "")
+      .trim()
+      .toUpperCase();
+
+  const price =
+    Number(payload.price);
+
+  const score =
+    Number(payload.score);
+
+  if (
+    !/^[A-Z][A-Z0-9.-]{0,9}$/.test(
+      symbol
+    )
+  ) {
+    throw new Error(
+      "Invalid symbol."
+    );
+  }
+
+  if (
+    !Number.isFinite(price) ||
+    price <= 0
+  ) {
+    throw new Error(
+      "Invalid price."
+    );
+  }
+
+  if (
+    !Number.isFinite(score)
+  ) {
+    throw new Error(
+      "Invalid score."
+    );
+  }
+
+  const signal = {
+    symbol,
+    price,
+    score,
+
+    change_pct:
+      payload.change_pct ?? null,
+
+    relative_volume:
+      payload.relative_volume ?? null,
+
+    spread_pct:
+      payload.spread_pct ?? null,
+
+    position_in_range:
+      payload.position_in_range ?? null,
+
+    bid:
+      payload.bid ?? null,
+
+    ask:
+      payload.ask ?? null,
+
+    reasons:
+      Array.isArray(payload.reasons)
+        ? payload.reasons
+            .slice(0, 20)
+            .map(item =>
+              String(item).slice(0, 300)
+            )
+        : [],
+
+    scanner_generated_at:
+      payload.generated_at || null,
+
+    bridge_received_at:
+      new Date().toISOString()
+  };
+
+  bridgeState.received_count += 1;
+  bridgeState.last_received_at =
+    signal.bridge_received_at;
+  bridgeState.last_signal = signal;
+  bridgeState.last_error = null;
+
+  console.log(
+    `BRIDGE SIGNAL RECEIVED | ` +
+    `${signal.symbol} | ` +
+    `$${signal.price} | ` +
+    `SCORE ${signal.score} | ` +
+    `EXECUTION DISABLED`,
+    { flush: true }
+  );
+
+  return signal;
+}
+
 const server =
   http.createServer((req, res) => {
     const url = new URL(
@@ -463,31 +630,100 @@ const server =
     );
 
     /*
-     * PUBLIC HEALTH CHECK
-     *
-     * Deliberately returns no Robinhood
-     * authentication or account information.
+     * PUBLIC GENERIC HEALTH CHECK
      */
     if (url.pathname === "/health") {
-      res.writeHead(200, {
-        "Content-Type":
-          "application/json",
-        "Cache-Control": "no-store"
-      });
-
-      res.end(
-        JSON.stringify({
+      sendJson(
+        res,
+        200,
+        {
           status: "ok",
           service:
             "claude-robinhood-runtime"
-        })
+        }
       );
 
       return;
     }
 
     /*
-     * LOGIN PAGE
+     * SCANNER -> ROBINHOOD BRIDGE
+     *
+     * Separate Bearer token authentication.
+     * This route does NOT use the browser
+     * administrator session.
+     */
+    if (
+      url.pathname === "/bridge/signal" &&
+      req.method === "POST"
+    ) {
+      if (!isBridgeAuthenticated(req)) {
+        sendJson(
+          res,
+          401,
+          {
+            ok: false,
+            error: "unauthorized"
+          }
+        );
+
+        return;
+      }
+
+      let body = "";
+
+      req.on("data", chunk => {
+        body += chunk.toString();
+
+        if (body.length > 50000) {
+          req.destroy();
+        }
+      });
+
+      req.on("end", () => {
+        try {
+          const payload =
+            JSON.parse(body);
+
+          const signal =
+            acceptBridgeSignal(
+              payload
+            );
+
+          sendJson(
+            res,
+            200,
+            {
+              ok: true,
+              accepted: true,
+              execution_enabled:
+                BRIDGE_EXECUTION_ENABLED,
+              message:
+                "Signal received. Trading execution is disabled.",
+              signal
+            }
+          );
+        } catch (error) {
+          bridgeState.last_error =
+            error.message;
+
+          sendJson(
+            res,
+            400,
+            {
+              ok: false,
+              error:
+                error.message
+            }
+          );
+        }
+      });
+
+      return;
+    }
+
+    /*
+     * ADMIN LOGIN PAGE
      */
     if (
       url.pathname === "/login" &&
@@ -532,7 +768,7 @@ const server =
     }
 
     /*
-     * LOGIN SUBMISSION
+     * ADMIN LOGIN SUBMISSION
      */
     if (
       url.pathname === "/login" &&
@@ -604,9 +840,6 @@ const server =
       return;
     }
 
-    /*
-     * LOGOUT
-     */
     if (url.pathname === "/logout") {
       clearSessionCookie(res);
       redirect(res, "/login");
@@ -614,10 +847,88 @@ const server =
     }
 
     /*
-     * EVERYTHING BELOW THIS POINT
-     * REQUIRES ADMIN AUTHENTICATION.
+     * EVERYTHING BELOW HERE REQUIRES
+     * ADMINISTRATOR LOGIN.
      */
     if (!requireAuth(req, res)) {
+      return;
+    }
+
+    /*
+     * ADMIN BRIDGE STATUS
+     */
+    if (url.pathname === "/bridge") {
+      res.writeHead(200, {
+        "Content-Type": "text/html",
+        "Cache-Control": "no-store"
+      });
+
+      res.end(
+        html(`
+          <div class="box">
+            <h2>Scanner Bridge</h2>
+
+            <p>
+              <strong>Execution:</strong>
+              DISABLED
+            </p>
+
+            <p>
+              <strong>
+                Signals received:
+              </strong>
+              ${bridgeState.received_count}
+            </p>
+
+            <p>
+              <strong>
+                Last received:
+              </strong>
+              ${escapeHtml(
+                bridgeState.last_received_at ||
+                "None"
+              )}
+            </p>
+          </div>
+
+          <div class="box">
+            <h2>Latest Signal</h2>
+
+            <pre>${escapeHtml(
+              bridgeState.last_signal
+                ? JSON.stringify(
+                    bridgeState.last_signal,
+                    null,
+                    2
+                  )
+                : "No signal received yet."
+            )}</pre>
+          </div>
+
+          ${
+            bridgeState.last_error
+              ? `
+                <div class="box">
+                  <strong>
+                    Last bridge error:
+                  </strong>
+
+                  <pre>${escapeHtml(
+                    bridgeState.last_error
+                  )}</pre>
+                </div>
+              `
+              : ""
+          }
+
+          <div class="box">
+            <a href="/">
+              Home
+            </a>
+          </div>
+        `)
+      );
+
       return;
     }
 
@@ -626,14 +937,12 @@ const server =
      */
     if (url.pathname === "/auth/start") {
       startLogin();
-
       redirect(res, "/auth");
       return;
     }
 
     /*
-     * SUBMIT ROBINHOOD LOCALHOST
-     * REDIRECT
+     * ROBINHOOD OAUTH CALLBACK
      */
     if (
       url.pathname ===
@@ -683,12 +992,6 @@ const server =
                 <strong>
                   Invalid redirect URL.
                 </strong>
-
-                <p>
-                  Paste the complete localhost
-                  URL that Robinhood redirected
-                  your browser to.
-                </p>
               </div>
 
               <a href="/auth">
@@ -705,10 +1008,6 @@ const server =
             redirectUrl
           );
 
-        /*
-         * Immediately discard the callback
-         * string from this request scope.
-         */
         body = "";
 
         if (!accepted) {
@@ -741,9 +1040,6 @@ const server =
       return;
     }
 
-    /*
-     * ROBINHOOD AUTHENTICATION PAGE
-     */
     if (url.pathname === "/auth") {
       inspectLoginOutput();
 
@@ -785,8 +1081,7 @@ const server =
             <p>
               When Robinhood redirects your
               browser to localhost, copy the
-              complete URL from the browser
-              address bar and paste it below.
+              complete URL and paste it below.
             </p>
 
             <form
@@ -839,11 +1134,6 @@ const server =
           <div class="box">
             Claude is starting the Robinhood
             authentication flow.
-
-            <p>
-              Refresh this page in a few
-              seconds.
-            </p>
           </div>
         `;
       }
@@ -868,11 +1158,6 @@ const server =
         stateBlock += `
           <div class="box">
             Redirect submitted to Claude.
-
-            <p>
-              Refresh this page in a few
-              seconds.
-            </p>
           </div>
         `;
       }
@@ -902,7 +1187,6 @@ const server =
           </div>
 
           ${stateBlock}
-
           ${authorizationBlock}
 
           ${
@@ -938,13 +1222,7 @@ const server =
       return;
     }
 
-    /*
-     * READ-ONLY TEST PAGE
-     */
-    if (
-      url.pathname ===
-      "/test-read"
-    ) {
+    if (url.pathname === "/test-read") {
       res.writeHead(200, {
         "Content-Type": "text/html",
         "Cache-Control": "no-store"
@@ -961,13 +1239,6 @@ const server =
               This retrieves basic Robinhood
               account information using
               read-only instructions.
-            </p>
-
-            <p>
-              It is explicitly prohibited from
-              placing, preparing, modifying or
-              cancelling orders or changing
-              the account.
             </p>
 
             <p>
@@ -990,9 +1261,6 @@ const server =
       return;
     }
 
-    /*
-     * RUN READ-ONLY TEST
-     */
     if (
       url.pathname ===
       "/test-read/run"
@@ -1022,10 +1290,6 @@ const server =
                   error
                     ? `
                       <p class="error">
-                        <strong>
-                          Process error:
-                        </strong>
-
                         ${escapeHtml(
                           error.message
                         )}
@@ -1033,12 +1297,6 @@ const server =
                     `
                     : ""
                 }
-              </div>
-
-              <div class="box">
-                <a href="/status">
-                  Check MCP Status
-                </a>
               </div>
 
               <div class="box">
@@ -1054,12 +1312,7 @@ const server =
       return;
     }
 
-    /*
-     * MCP STATUS
-     */
-    if (
-      url.pathname === "/status"
-    ) {
+    if (url.pathname === "/status") {
       checkMcp(
         (error, output) => {
           res.writeHead(200, {
@@ -1093,19 +1346,6 @@ const server =
               </div>
 
               <div class="box">
-                <a href="/test-read">
-                  Run Read-Only Robinhood
-                  Test
-                </a>
-              </div>
-
-              <div class="box">
-                <a href="/auth">
-                  Authentication
-                </a>
-              </div>
-
-              <div class="box">
                 <a href="/">
                   Home
                 </a>
@@ -1118,9 +1358,6 @@ const server =
       return;
     }
 
-    /*
-     * HOME
-     */
     if (url.pathname === "/") {
       res.writeHead(200, {
         "Content-Type": "text/html",
@@ -1153,10 +1390,25 @@ const server =
             </p>
 
             <p>
+              <a href="/bridge">
+                <button>
+                  Scanner Bridge
+                </button>
+              </a>
+            </p>
+
+            <p>
               <a href="/auth">
                 Robinhood Authentication
               </a>
             </p>
+          </div>
+
+          <div class="box">
+            <strong>
+              Trade execution:
+            </strong>
+            DISABLED
           </div>
 
           <div class="box">
@@ -1170,9 +1422,6 @@ const server =
       return;
     }
 
-    /*
-     * UNKNOWN PROTECTED ROUTE
-     */
     res.writeHead(404, {
       "Content-Type": "text/html",
       "Cache-Control": "no-store"
@@ -1197,6 +1446,10 @@ server.listen(
   () => {
     console.log(
       `Claude Robinhood runtime listening on port ${PORT}`
+    );
+
+    console.log(
+      "Scanner bridge ready. Trade execution disabled."
     );
   }
 );
