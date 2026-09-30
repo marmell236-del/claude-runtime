@@ -444,7 +444,6 @@ function validateSignal(raw) {
 
   return signal;
 }
-
 // ============================================================
 // SAFETY ASSESSMENT
 // ============================================================
@@ -687,6 +686,39 @@ function acceptBridgeSignal(raw) {
 }
 
 // ============================================================
+// CLAUDE / ROBINHOOD STATUS
+// ============================================================
+
+async function refreshClaudeStatus() {
+  state.robinhood.statusOutput = "Checking Claude MCP status...";
+
+  try {
+    const result = await runClaude(
+      [
+        "-p",
+        "--disallowedTools",
+        "mcp__robinhood-trading__*"
+      ],
+      `
+Do not use any MCP tools.
+
+Return a short plain-text status confirming that the Claude
+runtime is responding.
+
+Do not perform any account action.
+Do not place, preview, modify, or cancel any order.
+`
+    );
+
+    state.robinhood.statusOutput =
+      result.stdout.trim() || "Claude runtime responded.";
+  } catch (error) {
+    state.robinhood.statusOutput =
+      `Claude status error:\n${String(error.message || error)}`;
+  }
+}
+
+// ============================================================
 // ROBINHOOD READ-ONLY ACCOUNT CHECK
 // ============================================================
 
@@ -697,4 +729,873 @@ async function refreshRobinhoodAccount() {
   state.robinhood.accountOutput = "Refreshing...";
 
   const prompt = `
-Use Robinhood
+Use Robinhood READ-ONLY tools to inspect the connected account.
+
+You may retrieve:
+- account information
+- portfolio information
+- equity positions
+- option positions
+- crypto positions
+- recent equity orders
+- recent option orders
+- recent crypto orders
+
+Do NOT:
+- place an order
+- preview an order
+- cancel an order
+- modify or replace an order
+- exercise an option
+- transfer funds or assets
+- make any account change
+
+This is an account connectivity/status check only.
+
+Return a concise plain-text report containing:
+1. Whether Robinhood appears connected.
+2. Account/portfolio value if available.
+3. Buying power or cash if available.
+4. Current positions if available.
+5. Any authentication or connection error encountered.
+
+Do not recommend or execute any trade.
+`;
+
+  try {
+    const args = [
+      "-p",
+      "--allowedTools",
+      ROBINHOOD_READ_TOOLS.join(","),
+      "--disallowedTools",
+      ROBINHOOD_WRITE_TOOLS.join(",")
+    ];
+
+    const result = await runClaude(
+      args,
+      prompt,
+      180000
+    );
+
+    state.robinhood.accountOutput =
+      result.stdout.trim() ||
+      "Robinhood check completed with no output.";
+
+    state.robinhood.accountLastUpdated =
+      new Date().toISOString();
+  } catch (error) {
+    state.robinhood.accountOutput =
+      `Robinhood account check failed:\n${
+        String(error.message || error)
+      }`;
+
+    state.robinhood.accountLastUpdated =
+      new Date().toISOString();
+  } finally {
+    state.robinhood.accountRunning = false;
+  }
+}
+
+// ============================================================
+// ADMIN HTML
+// ============================================================
+
+function renderLoginPage(message = "") {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1"
+>
+<title>Bridge Admin Login</title>
+<style>
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: #111;
+    color: #eee;
+    margin: 0;
+    padding: 32px 18px;
+  }
+
+  .card {
+    max-width: 520px;
+    margin: 40px auto;
+    background: #1b1b1b;
+    border: 1px solid #333;
+    border-radius: 14px;
+    padding: 24px;
+  }
+
+  h1 {
+    margin-top: 0;
+    font-size: 24px;
+  }
+
+  input {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 12px;
+    margin: 10px 0 16px;
+    border-radius: 8px;
+    border: 1px solid #444;
+    background: #0d0d0d;
+    color: #fff;
+  }
+
+  button {
+    padding: 11px 16px;
+    border: 0;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 700;
+  }
+
+  .error {
+    color: #ff8d8d;
+    white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Claude ↔ Robinhood Bridge</h1>
+    <p>Administrator login</p>
+
+    ${
+      message
+        ? `<p class="error">${escapeHtml(message)}</p>`
+        : ""
+    }
+
+    <form method="post" action="/admin/login">
+      <label for="password">Admin password</label>
+      <input
+        id="password"
+        name="password"
+        type="password"
+        autocomplete="current-password"
+        required
+      >
+      <button type="submit">Sign in</button>
+    </form>
+  </div>
+</body>
+</html>`;
+}
+
+function renderAdminPage() {
+  const latestSignal = state.bridge.latestSignal
+    ? JSON.stringify(state.bridge.latestSignal, null, 2)
+    : "No signal received yet.";
+
+  const latestDecision = state.decisions.latest
+    ? JSON.stringify(state.decisions.latest, null, 2)
+    : "No decision produced yet.";
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1"
+>
+<title>Claude ↔ Robinhood Bridge</title>
+<style>
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    margin: 0;
+    background: #101010;
+    color: #ededed;
+  }
+
+  main {
+    max-width: 1050px;
+    margin: 0 auto;
+    padding: 24px 16px 60px;
+  }
+
+  h1, h2 {
+    margin-bottom: 10px;
+  }
+
+  .status {
+    display: inline-block;
+    padding: 5px 9px;
+    border: 1px solid #444;
+    border-radius: 999px;
+    margin-right: 8px;
+    margin-bottom: 8px;
+  }
+
+  .card {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 12px;
+    padding: 18px;
+    margin: 16px 0;
+  }
+
+  pre {
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: #0b0b0b;
+    border: 1px solid #303030;
+    border-radius: 8px;
+    padding: 14px;
+  }
+
+  button {
+    padding: 10px 14px;
+    margin: 4px 6px 4px 0;
+    border: 0;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 700;
+  }
+
+  a {
+    color: #b9d8ff;
+  }
+
+  .warning {
+    color: #ffd27d;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Claude ↔ Robinhood Bridge V3</h1>
+
+  <div>
+    <span class="status">
+      Execution:
+      ${ROBINHOOD_EXECUTION_ENABLED ? "ENABLED" : "DISABLED"}
+    </span>
+
+    <span class="status">
+      Decision mode:
+      ${DECISION_MODE_ENABLED ? "ENABLED" : "DISABLED"}
+    </span>
+
+    <span class="status">
+      Signals received:
+      ${state.bridge.received}
+    </span>
+  </div>
+
+  <p class="warning">
+    Robinhood execution is disabled. This service does not
+    intentionally permit Robinhood write/order tools.
+  </p>
+
+  <div class="card">
+    <h2>Runtime</h2>
+
+    <p>
+      Started:
+      ${escapeHtml(state.startedAt)}
+    </p>
+
+    <form
+      method="post"
+      action="/admin/claude-status"
+    >
+      <button type="submit">
+        Check Claude Runtime
+      </button>
+    </form>
+
+    <pre>${
+      escapeHtml(
+        state.robinhood.statusOutput ||
+        "Claude status has not been checked."
+      )
+    }</pre>
+  </div>
+
+  <div class="card">
+    <h2>Robinhood Read-Only Check</h2>
+
+    <p>
+      Last updated:
+      ${
+        escapeHtml(
+          state.robinhood.accountLastUpdated ||
+          "Never"
+        )
+      }
+    </p>
+
+    <form
+      method="post"
+      action="/admin/robinhood-refresh"
+    >
+      <button
+        type="submit"
+        ${
+          state.robinhood.accountRunning
+            ? "disabled"
+            : ""
+        }
+      >
+        ${
+          state.robinhood.accountRunning
+            ? "Refreshing..."
+            : "Refresh Robinhood Account"
+        }
+      </button>
+    </form>
+
+    <pre>${
+      escapeHtml(
+        state.robinhood.accountOutput ||
+        "Robinhood has not been checked."
+      )
+    }</pre>
+  </div>
+
+  <div class="card">
+    <h2>Latest Scanner Signal</h2>
+    <pre>${escapeHtml(latestSignal)}</pre>
+  </div>
+
+  <div class="card">
+    <h2>Latest Dry-Run Decision</h2>
+    <pre>${escapeHtml(latestDecision)}</pre>
+  </div>
+
+  <div class="card">
+    <h2>Bridge Statistics</h2>
+    <pre>${escapeHtml(
+      JSON.stringify(
+        {
+          bridge: {
+            executionEnabled:
+              state.bridge.executionEnabled,
+            received:
+              state.bridge.received,
+            rejected:
+              state.bridge.rejected,
+            lastReceivedAt:
+              state.bridge.lastReceivedAt,
+            latestRejection:
+              state.bridge.latestRejection
+          },
+
+          decisions: {
+            enabled:
+              state.decisions.enabled,
+            executionEnabled:
+              state.decisions.executionEnabled,
+            requested:
+              state.decisions.requested,
+            completed:
+              state.decisions.completed,
+            failed:
+              state.decisions.failed,
+            skipped:
+              state.decisions.skipped,
+            running:
+              state.decisions.running
+          }
+        },
+        null,
+        2
+      )
+    )}</pre>
+  </div>
+
+  <p>
+    <a href="/admin/logout">Sign out</a>
+  </p>
+</main>
+</body>
+</html>`;
+}
+// ============================================================
+// HTTP SERVER
+// ============================================================
+
+const server = http.createServer(async (req, res) => {
+  try {
+    const url = new URL(
+      req.url,
+      `http://${req.headers.host || "localhost"}`
+    );
+
+    // --------------------------------------------------------
+    // HEALTH
+    // --------------------------------------------------------
+
+    if (req.method === "GET" && url.pathname === "/") {
+      return sendJson(res, 200, {
+        service: "claude-robinhood-bridge",
+        version: "3.0.0",
+        status: "ok",
+        execution_enabled: ROBINHOOD_EXECUTION_ENABLED,
+        decision_mode_enabled: DECISION_MODE_ENABLED,
+        started_at: state.startedAt
+      });
+    }
+
+    if (
+      req.method === "GET" &&
+      url.pathname === "/health"
+    ) {
+      return sendJson(res, 200, {
+        ok: true,
+        service: "claude-robinhood-bridge",
+        execution_enabled: false,
+        uptime_seconds: Math.floor(process.uptime())
+      });
+    }
+
+    // --------------------------------------------------------
+    // BRIDGE STATUS
+    // --------------------------------------------------------
+
+    if (
+      req.method === "GET" &&
+      url.pathname === "/bridge/status"
+    ) {
+      if (!bridgeAuthorized(req)) {
+        return sendJson(res, 401, {
+          error: "Unauthorized"
+        });
+      }
+
+      return sendJson(res, 200, {
+        execution_enabled: false,
+
+        bridge: {
+          received: state.bridge.received,
+          rejected: state.bridge.rejected,
+          last_received_at:
+            state.bridge.lastReceivedAt,
+          latest_signal:
+            state.bridge.latestSignal,
+          latest_rejection:
+            state.bridge.latestRejection
+        },
+
+        decisions: {
+          enabled:
+            state.decisions.enabled,
+          execution_enabled: false,
+          requested:
+            state.decisions.requested,
+          completed:
+            state.decisions.completed,
+          failed:
+            state.decisions.failed,
+          skipped:
+            state.decisions.skipped,
+          running:
+            state.decisions.running,
+          latest:
+            state.decisions.latest
+        }
+      });
+    }
+
+    // --------------------------------------------------------
+    // RECEIVE SCANNER SIGNAL
+    // --------------------------------------------------------
+
+    if (
+      req.method === "POST" &&
+      url.pathname === "/bridge/signal"
+    ) {
+      if (!bridgeAuthorized(req)) {
+        state.bridge.rejected++;
+
+        state.bridge.latestRejection = {
+          reason: "Unauthorized",
+          at: new Date().toISOString()
+        };
+
+        return sendJson(res, 401, {
+          accepted: false,
+          error: "Unauthorized"
+        });
+      }
+
+      let body;
+
+      try {
+        body = await readBody(req);
+      } catch (error) {
+        state.bridge.rejected++;
+
+        state.bridge.latestRejection = {
+          reason: String(error.message || error),
+          at: new Date().toISOString()
+        };
+
+        return sendJson(res, 413, {
+          accepted: false,
+          error: "Request body rejected"
+        });
+      }
+
+      let raw;
+
+      try {
+        raw = JSON.parse(body);
+      } catch (_) {
+        state.bridge.rejected++;
+
+        state.bridge.latestRejection = {
+          reason: "Invalid JSON",
+          at: new Date().toISOString()
+        };
+
+        return sendJson(res, 400, {
+          accepted: false,
+          error: "Invalid JSON"
+        });
+      }
+
+      try {
+        const signal = acceptBridgeSignal(raw);
+
+        return sendJson(res, 202, {
+          accepted: true,
+          execution_enabled: false,
+          symbol: signal.symbol,
+          lifecycle: signal.lifecycle,
+          score: signal.score,
+          received_at:
+            signal.bridge_received_at
+        });
+      } catch (error) {
+        state.bridge.rejected++;
+
+        state.bridge.latestRejection = {
+          reason: String(error.message || error),
+          at: new Date().toISOString()
+        };
+
+        return sendJson(res, 400, {
+          accepted: false,
+          error: String(error.message || error)
+        });
+      }
+    }
+
+    // --------------------------------------------------------
+    // ADMIN LOGIN PAGE
+    // --------------------------------------------------------
+
+    if (
+      req.method === "GET" &&
+      url.pathname === "/admin/login"
+    ) {
+      if (isAdmin(req)) {
+        res.writeHead(302, {
+          Location: "/admin"
+        });
+
+        return res.end();
+      }
+
+      return send(
+        res,
+        200,
+        renderLoginPage(),
+        "text/html"
+      );
+    }
+
+    // --------------------------------------------------------
+    // ADMIN LOGIN
+    // --------------------------------------------------------
+
+    if (
+      req.method === "POST" &&
+      url.pathname === "/admin/login"
+    ) {
+      const body = await readBody(req);
+      const form = parseForm(body);
+
+      if (
+        !timingSafeEqualString(
+          form.password,
+          ADMIN_PASSWORD
+        )
+      ) {
+        return send(
+          res,
+          401,
+          renderLoginPage("Incorrect password."),
+          "text/html"
+        );
+      }
+
+      securityHeaders(res);
+
+      res.writeHead(302, {
+        Location: "/admin",
+
+        "Set-Cookie":
+          `admin_session=${encodeURIComponent(
+            ADMIN_SESSION_TOKEN
+          )}; Path=/; HttpOnly; Secure; SameSite=Strict`
+      });
+
+      return res.end();
+    }
+
+    // --------------------------------------------------------
+    // ADMIN LOGOUT
+    // --------------------------------------------------------
+
+    if (
+      req.method === "GET" &&
+      url.pathname === "/admin/logout"
+    ) {
+      securityHeaders(res);
+
+      res.writeHead(302, {
+        Location: "/admin/login",
+
+        "Set-Cookie":
+          "admin_session=; Path=/; HttpOnly; Secure; " +
+          "SameSite=Strict; Max-Age=0"
+      });
+
+      return res.end();
+    }
+
+    // --------------------------------------------------------
+    // ADMIN HOME
+    // --------------------------------------------------------
+
+    if (
+      req.method === "GET" &&
+      url.pathname === "/admin"
+    ) {
+      if (!isAdmin(req)) {
+        res.writeHead(302, {
+          Location: "/admin/login"
+        });
+
+        return res.end();
+      }
+
+      return send(
+        res,
+        200,
+        renderAdminPage(),
+        "text/html"
+      );
+    }
+
+    // --------------------------------------------------------
+    // CHECK CLAUDE RUNTIME
+    // --------------------------------------------------------
+
+    if (
+      req.method === "POST" &&
+      url.pathname === "/admin/claude-status"
+    ) {
+      if (!isAdmin(req)) {
+        return sendJson(res, 401, {
+          error: "Unauthorized"
+        });
+      }
+
+      await refreshClaudeStatus();
+
+      res.writeHead(303, {
+        Location: "/admin"
+      });
+
+      return res.end();
+    }
+
+    // --------------------------------------------------------
+    // REFRESH ROBINHOOD ACCOUNT
+    // --------------------------------------------------------
+
+    if (
+      req.method === "POST" &&
+      url.pathname === "/admin/robinhood-refresh"
+    ) {
+      if (!isAdmin(req)) {
+        return sendJson(res, 401, {
+          error: "Unauthorized"
+        });
+      }
+
+      if (!state.robinhood.accountRunning) {
+        setImmediate(() => {
+          refreshRobinhoodAccount()
+            .catch(error => {
+              console.error(
+                "Robinhood refresh error:",
+                error
+              );
+            });
+        });
+      }
+
+      res.writeHead(303, {
+        Location: "/admin"
+      });
+
+      return res.end();
+    }
+
+    // --------------------------------------------------------
+    // ADMIN JSON STATUS
+    // --------------------------------------------------------
+
+    if (
+      req.method === "GET" &&
+      url.pathname === "/admin/status.json"
+    ) {
+      if (!isAdmin(req)) {
+        return sendJson(res, 401, {
+          error: "Unauthorized"
+        });
+      }
+
+      return sendJson(res, 200, {
+        started_at: state.startedAt,
+
+        execution_enabled:
+          ROBINHOOD_EXECUTION_ENABLED,
+
+        decision_mode_enabled:
+          DECISION_MODE_ENABLED,
+
+        bridge: {
+          received:
+            state.bridge.received,
+
+          rejected:
+            state.bridge.rejected,
+
+          last_received_at:
+            state.bridge.lastReceivedAt,
+
+          latest_signal:
+            state.bridge.latestSignal,
+
+          latest_rejection:
+            state.bridge.latestRejection
+        },
+
+        decisions: {
+          requested:
+            state.decisions.requested,
+
+          completed:
+            state.decisions.completed,
+
+          failed:
+            state.decisions.failed,
+
+          skipped:
+            state.decisions.skipped,
+
+          running:
+            state.decisions.running,
+
+          latest:
+            state.decisions.latest
+        },
+
+        robinhood: {
+          account_running:
+            state.robinhood.accountRunning,
+
+          account_last_updated:
+            state.robinhood.accountLastUpdated,
+
+          account_output:
+            state.robinhood.accountOutput,
+
+          claude_status:
+            state.robinhood.statusOutput
+        }
+      });
+    }
+
+    // --------------------------------------------------------
+    // NOT FOUND
+    // --------------------------------------------------------
+
+    return sendJson(res, 404, {
+      error: "Not found"
+    });
+  } catch (error) {
+    console.error("HTTP request error:", error);
+
+    if (!res.headersSent) {
+      return sendJson(res, 500, {
+        error: "Internal server error"
+      });
+    }
+
+    try {
+      res.end();
+    } catch (_) {}
+  }
+});
+
+// ============================================================
+// SERVER ERRORS
+// ============================================================
+
+server.on("clientError", (error, socket) => {
+  console.error("Client error:", error.message);
+
+  if (socket.writable) {
+    socket.end(
+      "HTTP/1.1 400 Bad Request\r\n" +
+      "Connection: close\r\n" +
+      "\r\n"
+    );
+  }
+});
+
+server.on("error", error => {
+  console.error("Server error:", error);
+  process.exitCode = 1;
+});
+
+// ============================================================
+// START
+// ============================================================
+
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(
+    `Claude ↔ Robinhood Bridge V3 listening on port ${PORT}`
+  );
+
+  console.log(
+    "Robinhood execution enabled:",
+    ROBINHOOD_EXECUTION_ENABLED
+  );
+
+  console.log(
+    "Decision mode enabled:",
+    DECISION_MODE_ENABLED
+  );
+
+  console.log(
+    "Admin:",
+    "/admin"
+  );
+
+  console.log(
+    "Signal endpoint:",
+    "/bridge/signal"
+  );
+});
