@@ -42,3 +42,4 @@ CMD bash -c '\
   claude mcp login --help && \
   echo "=== STARTING HEALTH SERVER ===" && \
   node server.js'
+
