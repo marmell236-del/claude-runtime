@@ -29,17 +29,22 @@ COPY server.js .
 # Railway supplies PORT at runtime
 EXPOSE 3000
 
-# Register Robinhood Trading MCP, verify it, then keep the Railway service alive.
-# This does NOT initiate Robinhood OAuth or place any trades.
+# Start Claude/Robinhood runtime.
+#
+# The Claude configuration is stored persistently at /root/.claude.
+# If Robinhood MCP already exists, DO NOT try to add it again.
+# If it does not exist, register it.
 CMD bash -c '\
   echo "=== CLAUDE VERSION ===" && \
   claude --version && \
-  echo "=== ADDING ROBINHOOD MCP ===" && \
-  claude mcp add --transport http robinhood-trading https://agent.robinhood.com/mcp/trading && \
+  echo "=== CHECKING ROBINHOOD MCP ===" && \
+  if claude mcp get robinhood-trading >/dev/null 2>&1; then \
+    echo "Robinhood MCP already configured."; \
+  else \
+    echo "Robinhood MCP not found. Adding it..." && \
+    claude mcp add --transport http robinhood-trading https://agent.robinhood.com/mcp/trading; \
+  fi && \
   echo "=== ROBINHOOD MCP CONFIG ===" && \
   claude mcp get robinhood-trading && \
-  echo "=== MCP LOGIN HELP ===" && \
-  claude mcp login --help && \
-  echo "=== STARTING HEALTH SERVER ===" && \
-  node server.js'
-
+  echo "=== STARTING SERVER ===" && \
+  exec node server.js'
