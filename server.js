@@ -94,10 +94,6 @@ function normalizeClaudeOutput(text) {
 function extractAuthorizationUrl(text) {
   const normalized = normalizeClaudeOutput(text);
 
-  /*
-   * Prefer the complete Claude-generated Robinhood OAuth URL.
-   * Stop only at whitespace/quotes/angle brackets.
-   */
   const matches =
     normalized.match(/https?:\/\/[^\s"'<>]+/g) || [];
 
@@ -148,10 +144,6 @@ function startLogin() {
   loginError = "";
   loginState = "starting";
 
-  /*
-   * `script` provides Claude with an actual pseudo-terminal.
-   * Claude MCP OAuth refuses to run when stdin is merely a pipe.
-   */
   const command =
     "claude mcp login robinhood-trading --no-browser";
 
@@ -169,19 +161,12 @@ function startLogin() {
 
     loginOutput += text;
 
-    /*
-     * Keep a bounded diagnostic buffer.
-     */
     if (loginOutput.length > 100000) {
       loginOutput = loginOutput.slice(-100000);
     }
 
     inspectLoginOutput();
 
-    /*
-     * Log Claude output for Railway diagnostics, but redact
-     * OAuth state and authorization codes if they appear.
-     */
     const safeText = text
       .replace(/([?&]code=)[^&\s]+/gi, "$1[REDACTED]")
       .replace(/([?&]state=)[^&\s]+/gi, "$1[REDACTED]");
@@ -245,12 +230,69 @@ function checkMcp(callback) {
   );
 }
 
+/*
+ * READ-ONLY ROBINHOOD TEST
+ *
+ * This deliberately instructs Claude to retrieve information only.
+ * It must not place, modify, prepare, or cancel orders or perform
+ * other account-changing actions.
+ */
+function runReadOnlyTest(callback) {
+  const prompt = `
+Use the connected robinhood-trading MCP server.
+
+READ-ONLY TEST ONLY.
+
+Retrieve basic information about the connected Robinhood account and its current holdings or positions.
+
+Do not place any order.
+Do not prepare or preview any order.
+Do not modify any order.
+Do not cancel any order.
+Do not transfer funds.
+Do not modify the account.
+Do not perform any write action.
+
+Return a concise plain-text summary showing:
+
+1. Whether Robinhood account data was successfully retrieved.
+2. Current holdings or positions, if available.
+3. Cash or buying-power information, if available.
+
+If a requested field is unavailable through the connected read-only tools, say that it is unavailable.
+`;
+
+  execFile(
+    "claude",
+    [
+      "-p",
+      prompt,
+      "--allowedTools",
+      "mcp__robinhood-trading__*"
+    ],
+    {
+      env: process.env,
+      timeout: 60000,
+      maxBuffer: 1024 * 1024
+    },
+    (error, stdout, stderr) => {
+      callback(
+        error,
+        `${stdout || ""}${stderr || ""}`
+      );
+    }
+  );
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(
     req.url,
     `http://${req.headers.host}`
   );
 
+  /*
+   * HEALTH
+   */
   if (url.pathname === "/health") {
     inspectLoginOutput();
 
@@ -272,6 +314,9 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  /*
+   * START ROBINHOOD AUTHENTICATION
+   */
   if (url.pathname === "/auth/start") {
     startLogin();
 
@@ -283,6 +328,9 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  /*
+   * SUBMIT ROBINHOOD LOCALHOST REDIRECT
+   */
   if (
     url.pathname === "/auth/submit" &&
     req.method === "POST"
@@ -299,11 +347,6 @@ const server = http.createServer((req, res) => {
       const redirectUrl =
         params.get("redirect_url") || "";
 
-      /*
-       * Claude/Robinhood currently uses a localhost loopback
-       * redirect. We intentionally pass the full URL directly
-       * to the waiting Claude PTY.
-       */
       if (
         !redirectUrl.startsWith("http://localhost") &&
         !redirectUrl.startsWith("http://127.0.0.1") &&
@@ -317,13 +360,16 @@ const server = http.createServer((req, res) => {
           html(`
             <div class="box">
               <strong>Invalid redirect URL.</strong>
+
               <p>
                 Paste the complete localhost URL that Robinhood
                 redirected your browser to.
               </p>
             </div>
 
-            <a href="/auth">Back</a>
+            <a href="/auth">
+              Back
+            </a>
           `)
         );
 
@@ -363,6 +409,9 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  /*
+   * ROBINHOOD AUTHENTICATION PAGE
+   */
   if (url.pathname === "/auth") {
     inspectLoginOutput();
 
@@ -456,7 +505,10 @@ const server = http.createServer((req, res) => {
       stateBlock += `
         <div class="box">
           Claude is starting the Robinhood authentication flow.
-          Refresh this page in a few seconds.
+
+          <p>
+            Refresh this page in a few seconds.
+          </p>
         </div>
       `;
     }
@@ -469,7 +521,7 @@ const server = http.createServer((req, res) => {
         <div class="box">
           Claude is waiting for authorization, but the web
           interface has not yet reconstructed the authorization
-          URL. Check Railway logs before restarting the process.
+          URL.
         </div>
       `;
     }
@@ -477,8 +529,11 @@ const server = http.createServer((req, res) => {
     if (loginState === "submitting_redirect") {
       stateBlock += `
         <div class="box">
-          Redirect submitted to Claude. Refresh this page in a
-          few seconds.
+          Redirect submitted to Claude.
+
+          <p>
+            Refresh this page in a few seconds.
+          </p>
         </div>
       `;
     }
@@ -486,7 +541,9 @@ const server = http.createServer((req, res) => {
     if (loginState === "completed") {
       stateBlock += `
         <div class="box">
-          <strong>Authentication completed.</strong>
+          <strong>
+            Authentication completed.
+          </strong>
         </div>
       `;
     }
@@ -511,7 +568,10 @@ const server = http.createServer((req, res) => {
           loginError
             ? `
               <div class="box">
-                <strong>Diagnostic Error:</strong>
+                <strong>
+                  Diagnostic Error:
+                </strong>
+
                 <pre>${escapeHtml(loginError)}</pre>
               </div>
             `
@@ -529,6 +589,109 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  /*
+   * READ-ONLY TEST LANDING PAGE
+   */
+  if (url.pathname === "/test-read") {
+    res.writeHead(200, {
+      "Content-Type": "text/html",
+      "Cache-Control": "no-store"
+    });
+
+    res.end(
+      html(`
+        <div class="box">
+          <h2>
+            Robinhood Read-Only Test
+          </h2>
+
+          <p>
+            This will ask Claude to retrieve basic account,
+            holdings, and buying-power information through the
+            connected Robinhood MCP server.
+          </p>
+
+          <p>
+            This test explicitly prohibits placing, preparing,
+            modifying, or cancelling orders and prohibits other
+            account-changing actions.
+          </p>
+
+          <p>
+            <a href="/test-read/run">
+              <button>
+                Run Read-Only Test
+              </button>
+            </a>
+          </p>
+        </div>
+
+        <div class="box">
+          <a href="/">
+            Back
+          </a>
+        </div>
+      `)
+    );
+
+    return;
+  }
+
+  /*
+   * EXECUTE READ-ONLY TEST
+   */
+  if (url.pathname === "/test-read/run") {
+    runReadOnlyTest((error, output) => {
+      res.writeHead(200, {
+        "Content-Type": "text/html",
+        "Cache-Control": "no-store"
+      });
+
+      res.end(
+        html(`
+          <div class="box">
+            <h2>
+              Robinhood Read-Only Test Result
+            </h2>
+
+            <pre>${escapeHtml(output)}</pre>
+
+            ${
+              error
+                ? `
+                  <p>
+                    <strong>
+                      Process error:
+                    </strong>
+
+                    ${escapeHtml(error.message)}
+                  </p>
+                `
+                : ""
+            }
+          </div>
+
+          <div class="box">
+            <a href="/status">
+              Check MCP Status
+            </a>
+          </div>
+
+          <div class="box">
+            <a href="/">
+              Home
+            </a>
+          </div>
+        `)
+      );
+    });
+
+    return;
+  }
+
+  /*
+   * MCP STATUS
+   */
   if (url.pathname === "/status") {
     checkMcp((error, output) => {
       res.writeHead(200, {
@@ -539,13 +702,24 @@ const server = http.createServer((req, res) => {
       res.end(
         html(`
           <div class="box">
-            <h2>Robinhood MCP Status</h2>
+            <h2>
+              Robinhood MCP Status
+            </h2>
+
             <pre>${escapeHtml(output)}</pre>
           </div>
 
-          <a href="/auth">
-            Authentication
-          </a>
+          <div class="box">
+            <a href="/test-read">
+              Run Read-Only Robinhood Test
+            </a>
+          </div>
+
+          <div class="box">
+            <a href="/auth">
+              Authentication
+            </a>
+          </div>
         `)
       );
     });
@@ -553,6 +727,9 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  /*
+   * HOME
+   */
   res.writeHead(200, {
     "Content-Type": "text/html",
     "Cache-Control": "no-store"
@@ -576,6 +753,14 @@ const server = http.createServer((req, res) => {
         <p>
           <a href="/status">
             MCP Status
+          </a>
+        </p>
+
+        <p>
+          <a href="/test-read">
+            <button>
+              Run Read-Only Robinhood Test
+            </button>
           </a>
         </p>
       </div>
