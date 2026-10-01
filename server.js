@@ -689,7 +689,36 @@ function acceptBridgeSignal(raw) {
 
   return signal;
 }
+function sendAdminTestSignal() {
+  const now = new Date().toISOString();
 
+  return acceptBridgeSignal({
+    symbol: "TEST",
+    price: 10.00,
+    score: 7,
+    market_session: "regular",
+    lifecycle: "WATCH",
+    scanner_generated_at: now,
+
+    spread_pct: 0.25,
+    vwap_distance_pct: 1.2,
+    change_pct: 3.5,
+
+    reasons: [
+      "Administrative end-to-end test signal"
+    ],
+
+    risk_factors: [
+      "Synthetic test data - not a real trading opportunity"
+    ],
+
+    warnings: [
+      "TEST SIGNAL ONLY"
+    ],
+
+    test_signal: true
+  });
+}
 // ============================================================
 // CLAUDE / ROBINHOOD STATUS
 // ============================================================
@@ -1331,7 +1360,23 @@ function renderAdminPage() {
     <h2>Latest Scanner Signal</h2>
     <pre>${escapeHtml(latestSignal)}</pre>
   </div>
+    <div class="card">
+    <h2>Bridge Test</h2>
 
+    <p>
+      Sends one synthetic signal through the bridge and
+      dry-run decision engine. No Robinhood order is submitted.
+    </p>
+
+    <form
+      method="post"
+      action="/admin/test-signal"
+    >
+      <button type="submit">
+        Send Test Signal
+      </button>
+    </form>
+  </div>
   <div class="card">
     <h2>Latest Dry-Run Decision</h2>
     <pre>${escapeHtml(latestDecision)}</pre>
@@ -1853,6 +1898,34 @@ const server = http.createServer(async (req, res) => {
             String(error.message || error)
           }`
         );
+      }
+    }
+        // --------------------------------------------------------
+    // ADMIN TEST SIGNAL
+    // --------------------------------------------------------
+
+    if (
+      req.method === "POST" &&
+      url.pathname === "/admin/test-signal"
+    ) {
+      if (!isAdmin(req)) {
+        return sendJson(res, 401, {
+          error: "Unauthorized"
+        });
+      }
+
+      try {
+        sendAdminTestSignal();
+
+        res.writeHead(303, {
+          Location: "/admin"
+        });
+
+        return res.end();
+      } catch (error) {
+        return sendJson(res, 500, {
+          error: String(error.message || error)
+        });
       }
     }
     // --------------------------------------------------------
