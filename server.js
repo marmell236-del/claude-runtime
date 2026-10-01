@@ -552,7 +552,134 @@ function signalSafetyAssessment(signal) {
     cautions
   };
 }
+function executionGate(signal, decision) {
+  const blocks = [];
+  const cautions = [];
 
+  state.execution.evaluated++;
+
+  if (!signal || !decision) {
+    blocks.push("Missing signal or decision");
+  }
+
+  if (decision?.decision !== "BUY_CANDIDATE") {
+    blocks.push("Decision is not BUY_CANDIDATE");
+  }
+
+  const confidence = Number(decision?.confidence);
+
+  if (
+    !Number.isFinite(confidence) ||
+    confidence < MIN_EXECUTION_CONFIDENCE
+  ) {
+    blocks.push(
+      `Confidence below ${MIN_EXECUTION_CONFIDENCE}`
+    );
+  }
+
+  if (signal?.market_session !== "regular") {
+    blocks.push("Execution permitted only during regular session");
+  }
+
+  if (signal?.scanner_generated_at) {
+    const generated =
+      new Date(signal.scanner_generated_at);
+
+    if (Number.isNaN(generated.getTime())) {
+      blocks.push("Invalid scanner timestamp");
+    } else {
+      const age = Date.now() - generated.getTime();
+
+      if (
+        age < 0 ||
+        age > MAX_EXECUTION_SIGNAL_AGE_MS
+      ) {
+        blocks.push("Signal too old for execution");
+      }
+    }
+  } else {
+    blocks.push("Missing scanner timestamp");
+  }
+
+  const spread =
+    Number(decision?.market_context?.spread_pct);
+
+  if (!Number.isFinite(spread)) {
+    blocks.push("Live spread unavailable");
+  } else if (spread > MAX_EXECUTION_SPREAD_PCT) {
+    blocks.push(
+      `Spread exceeds ${MAX_EXECUTION_SPREAD_PCT}%`
+    );
+  }
+
+  const buyingPower =
+    Number(decision?.account_context?.buying_power);
+
+  if (!Number.isFinite(buyingPower)) {
+    blocks.push("Buying power unavailable");
+  } else if (buyingPower <= 0) {
+    blocks.push("No buying power available");
+  }
+
+  if (decision?.account_context?.existing_position === true) {
+    cautions.push("Existing position already present");
+  }
+
+  const approved = blocks.length === 0;
+
+  if (approved) {
+    state.execution.approved++;
+  } else {
+    state.execution.blocked++;
+  }
+
+  const result = {
+    approved,
+    symbol: signal?.symbol || null,
+    decision: decision?.decision || null,
+    confidence:
+      Number.isFinite(confidence) ? confidence : null,
+
+    proposedMaxPositionDollars:
+      Math.min(
+        MAX_POSITION_DOLLARS,
+        Number.isFinite(buyingPower)
+          ? Math.max(0, buyingPower)
+          : 0
+      ),
+
+    limits: {
+      maxPositionDollars: MAX_POSITION_DOLLARS,
+      maxTotalExposureDollars:
+        MAX_TOTAL_EXPOSURE_DOLLARS,
+      maxOpenPositions: MAX_OPEN_POSITIONS,
+      maxSignalAgeMs:
+        MAX_EXECUTION_SIGNAL_AGE_MS,
+      maxSpreadPct:
+        MAX_EXECUTION_SPREAD_PCT,
+      minConfidence:
+        MIN_EXECUTION_CONFIDENCE
+    },
+
+    blocks,
+    cautions,
+
+    preview_allowed:
+      approved &&
+      ROBINHOOD_EXECUTION_ENABLED,
+
+    submission_allowed:
+      approved &&
+      ROBINHOOD_EXECUTION_ENABLED &&
+      LIVE_ORDER_SUBMISSION_ENABLED,
+
+    evaluated_at: new Date().toISOString()
+  };
+
+  state.execution.latestResult = result;
+
+  return result;
+}
 // ============================================================
 // DRY-RUN DECISION ENGINE
 // ============================================================
