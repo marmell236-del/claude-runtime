@@ -842,23 +842,27 @@ function startRobinhoodAuthentication() {
 
   state.robinhood.authRunning = true;
   state.robinhood.authOutput =
-    "Starting Robinhood MCP authentication...\n";
+    "Starting Robinhood MCP authentication through PTY...\n";
   state.robinhood.authUrls = [];
   state.robinhood.authStartedAt =
     new Date().toISOString();
   state.robinhood.authFinishedAt = null;
   state.robinhood.authExitCode = null;
 
+  // `script` gives Claude a real pseudo-terminal (PTY).
   robinhoodAuthProcess = spawn(
-    "claude",
+    "script",
     [
-      "mcp",
-      "login",
-      "robinhood-trading",
-      "--no-browser"
+      "-q",
+      "-c",
+      "claude mcp login robinhood-trading --no-browser",
+      "/dev/null"
     ],
     {
-      env: process.env,
+      env: {
+        ...process.env,
+        TERM: process.env.TERM || "xterm-256color"
+      },
       stdio: [
         "pipe",
         "pipe",
@@ -885,9 +889,10 @@ function startRobinhoodAuthentication() {
     "error",
     error => {
       appendRobinhoodAuthOutput(
-        `\nAuthentication process error:\n${
+        `\nPTY launch failed:\n${
           String(error.message || error)
-        }\n`
+        }\n\nIf the error says spawn script ENOENT, ` +
+        "`script` is not installed in the Railway container."
       );
 
       state.robinhood.authRunning = false;
