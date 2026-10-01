@@ -585,37 +585,128 @@ async function runDryDecision(signal) {
   };
 
   const prompt = `
-Analyze this intraday scanner signal.
+Analyze this scanner signal using Robinhood READ-ONLY market
+and account data where useful.
 
-DRY RUN ONLY.
+IMPORTANT:
+THIS IS ANALYSIS ONLY.
+DO NOT PLACE OR PREVIEW AN ORDER.
+DO NOT CANCEL, MODIFY, REPLACE, OR EXERCISE ANY ORDER.
+DO NOT TRANSFER FUNDS OR ASSETS.
+DO NOT CHANGE THE ROBINHOOD ACCOUNT IN ANY WAY.
 
-Do not use Robinhood or any MCP tool.
-Do not place, preview, prepare, modify, or cancel orders.
+You may use available Robinhood READ-ONLY tools to investigate
+the signal's symbol.
 
-Return ONLY JSON:
+Where useful, inspect:
+
+- current equity quote
+- recent price history
+- technical indicators
+- price book / bid-ask information
+- tradability
+- fundamentals
+- financials
+- analyst ratings
+- earnings calendar
+- recent earnings results
+- SEC filing information
+- portfolio/account information
+- available cash or buying power
+- current equity positions
+- recent equity orders
+
+Do not assume every tool is necessary.
+
+If this is a synthetic TEST signal, do not attempt to research
+the symbol through Robinhood. Evaluate only the supplied test data.
+
+Your job is to independently determine whether this signal should
+currently be classified as:
+
+WATCH
+PASS
+BUY_CANDIDATE
+
+A BUY_CANDIDATE means the setup deserves further consideration.
+It DOES NOT authorize an order.
+
+Consider:
+
+- scanner score and lifecycle
+- current market session
+- spread and liquidity
+- price versus VWAP
+- momentum and trend
+- recent volatility
+- intraday price structure
+- technical confirmation
+- relevant fundamentals
+- earnings or event risk
+- tradability
+- available account capital
+- whether the move appears overextended
+- whether evidence confirms or contradicts the scanner signal
+- any important missing information
+
+Be skeptical of stale, incomplete, or contradictory data.
+
+Return ONLY valid JSON in this exact general structure:
 
 {
-  "decision":"WATCH|PASS|BUY_CANDIDATE",
-  "confidence":0,
-  "summary":"",
-  "positive_factors":[],
-  "risk_factors":[],
-  "missing_information":[],
-  "invalidation_conditions":[]
+  "decision": "WATCH|PASS|BUY_CANDIDATE",
+  "confidence": 0,
+  "symbol": "",
+  "summary": "",
+  "positive_factors": [],
+  "risk_factors": [],
+  "missing_information": [],
+  "invalidation_conditions": [],
+  "market_context": {
+    "current_price": null,
+    "bid": null,
+    "ask": null,
+    "spread_pct": null,
+    "trend": "",
+    "vwap_context": "",
+    "technical_context": ""
+  },
+  "account_context": {
+    "cash_available": null,
+    "buying_power": null,
+    "existing_position": false
+  },
+  "research_performed": []
 }
 
 Signal:
+
 ${JSON.stringify(signal, null, 2)}
 `;
 
   try {
-    const result = await runClaude(
-      [
+    let args;
+
+    if (signal.test_signal === true) {
+      args = [
         "-p",
         "--disallowedTools",
         "mcp__robinhood-trading__*"
-      ],
-      prompt
+      ];
+    } else {
+      args = [
+        "-p",
+        "--allowedTools",
+        ROBINHOOD_READ_TOOLS.join(","),
+        "--disallowedTools",
+        ROBINHOOD_WRITE_TOOLS.join(",")
+      ];
+    }
+
+    const result = await runClaude(
+      args,
+      prompt,
+      180000
     );
 
     const parsed =
@@ -638,13 +729,24 @@ ${JSON.stringify(signal, null, 2)}
       decision = "WATCH";
     }
 
+    const confidence =
+      Number.isFinite(Number(parsed.confidence))
+        ? Math.max(
+            0,
+            Math.min(100, Number(parsed.confidence))
+          )
+        : 0;
+
     state.decisions.latest = {
       ...parsed,
       decision,
+      confidence,
       symbol: signal.symbol,
       scanner_score: signal.score,
       scanner_lifecycle: signal.lifecycle,
       market_session: signal.market_session,
+      robinhood_research_enabled:
+        signal.test_signal !== true,
       created_at: new Date().toISOString(),
       execution_enabled: false
     };
@@ -666,7 +768,6 @@ ${JSON.stringify(signal, null, 2)}
     state.decisions.running = false;
   }
 }
-
 // ============================================================
 // SIGNAL ACCEPTANCE
 // ============================================================
