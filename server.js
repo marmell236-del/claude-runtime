@@ -196,16 +196,21 @@ const state = {
   },
 
   robinhood: {
-    statusOutput: "",
-    accountOutput: "",
-    accountRunning: false,
-    accountLastUpdated: null,
+  statusOutput: "",
+  accountOutput: "",
+  accountRunning: false,
+  accountLastUpdated: null,
 
-    loginOutput: "",
-    loginRunning: false,
-    loginInput: null
-  }
+  authRunning: false,
+  authOutput: "",
+  authUrls: [],
+  authStartedAt: null,
+  authFinishedAt: null,
+  authExitCode: null
+}
 };
+
+let robinhoodAuthProcess = null;
 
 // ============================================================
 // HTTP HELPERS
@@ -795,7 +800,170 @@ Do not recommend or execute any trade.
     state.robinhood.accountRunning = false;
   }
 }
+// ============================================================
+// ROBINHOOD MCP AUTHENTICATION
+// ============================================================
 
+function extractHttpsUrls(text) {
+  const matches =
+    String(text || "")
+      .match(/https:\/\/[^\s\x1b\x07"'<>]+/g) || [];
+
+  return [...new Set(matches)]
+    .filter(url => {
+      try {
+        return new URL(url).protocol === "https:";
+      } catch (_) {
+        return false;
+      }
+    });
+}
+
+function appendRobinhoodAuthOutput(chunk) {
+  const value = String(chunk || "");
+
+  state.robinhood.authOutput += value;
+
+  if (state.robinhood.authOutput.length > 50000) {
+    state.robinhood.authOutput =
+      state.robinhood.authOutput.slice(-50000);
+  }
+
+  const urls =
+    extractHttpsUrls(state.robinhood.authOutput);
+
+  state.robinhood.authUrls = urls;
+}
+
+function startRobinhoodAuthentication() {
+  if (state.robinhood.authRunning) {
+    return false;
+  }
+
+  state.robinhood.authRunning = true;
+  state.robinhood.authOutput =
+    "Starting Robinhood MCP authentication...\n";
+  state.robinhood.authUrls = [];
+  state.robinhood.authStartedAt =
+    new Date().toISOString();
+  state.robinhood.authFinishedAt = null;
+  state.robinhood.authExitCode = null;
+
+  robinhoodAuthProcess = spawn(
+    "claude",
+    [
+      "mcp",
+      "login",
+      "robinhood-trading",
+      "--no-browser"
+    ],
+    {
+      env: process.env,
+      stdio: [
+        "pipe",
+        "pipe",
+        "pipe"
+      ]
+    }
+  );
+
+  robinhoodAuthProcess.stdout.on(
+    "data",
+    chunk => {
+      appendRobinhoodAuthOutput(chunk);
+    }
+  );
+
+  robinhoodAuthProcess.stderr.on(
+    "data",
+    chunk => {
+      appendRobinhoodAuthOutput(chunk);
+    }
+  );
+
+  robinhoodAuthProcess.on(
+    "error",
+    error => {
+      appendRobinhoodAuthOutput(
+        `\nAuthentication process error:\n${
+          String(error.message || error)
+        }\n`
+      );
+
+      state.robinhood.authRunning = false;
+      state.robinhood.authFinishedAt =
+        new Date().toISOString();
+
+      robinhoodAuthProcess = null;
+    }
+  );
+
+  robinhoodAuthProcess.on(
+    "close",
+    code => {
+      state.robinhood.authRunning = false;
+      state.robinhood.authFinishedAt =
+        new Date().toISOString();
+      state.robinhood.authExitCode = code;
+
+      appendRobinhoodAuthOutput(
+        `\nAuthentication process finished with code ${code}.\n`
+      );
+
+      robinhoodAuthProcess = null;
+    }
+  );
+
+  return true;
+}
+
+function submitRobinhoodCallback(callbackUrl) {
+  if (
+    !state.robinhood.authRunning ||
+    !robinhoodAuthProcess ||
+    !robinhoodAuthProcess.stdin
+  ) {
+    throw new Error(
+      "No Robinhood authentication process is waiting."
+    );
+  }
+
+  const value =
+    String(callbackUrl || "").trim();
+
+  if (!value) {
+    throw new Error(
+      "Callback URL is required."
+    );
+  }
+
+  let parsed;
+
+  try {
+    parsed = new URL(value);
+  } catch (_) {
+    throw new Error(
+      "Callback URL is invalid."
+    );
+  }
+
+  if (
+    parsed.protocol !== "http:" &&
+    parsed.protocol !== "https:"
+  ) {
+    throw new Error(
+      "Callback URL must use http or https."
+    );
+  }
+
+  robinhoodAuthProcess.stdin.write(
+    value + "\n"
+  );
+
+  appendRobinhoodAuthOutput(
+    "\nCallback URL submitted.\n"
+  );
+}
 // ============================================================
 // ADMIN HTML
 // ============================================================
@@ -1016,7 +1184,103 @@ function renderAdminPage() {
       )
     }</pre>
   </div>
+  <div class="card">
+    <h2>Robinhood Authentication</h2>
 
+    <p>
+      Status:
+      ${
+        state.robinhood.authRunning
+          ? "Authentication in progress"
+          : "Not running"
+      }
+    </p>
+
+    <form
+      method="post"
+      action="/admin/robinhood-auth-start"
+    >
+      <button
+        type="submit"
+        ${
+          state.robinhood.authRunning
+            ? "disabled"
+            : ""
+        }
+      >
+        Start Robinhood Authentication
+      </button>
+    </form>
+
+    ${
+      state.robinhood.authUrls.length
+        ? `
+          <p><strong>Authentication links:</strong></p>
+
+          ${state.robinhood.authUrls
+            .map(
+              url => `
+                <p>
+                  <a
+                    href="${escapeHtml(url)}"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Open Robinhood Authentication
+                  </a>
+                </p>
+              `
+            )
+            .join("")}
+        `
+        : ""
+    }
+
+    ${
+      state.robinhood.authRunning
+        ? `
+          <form
+            method="post"
+            action="/admin/robinhood-auth-callback"
+          >
+            <p>
+              After Robinhood finishes,
+              copy the full URL from your browser's
+              address bar and paste it below.
+            </p>
+
+            <input
+              name="callback_url"
+              type="text"
+              placeholder="Paste callback URL here"
+              required
+              style="
+                box-sizing:border-box;
+                width:100%;
+                padding:12px;
+                margin:8px 0 12px;
+                border-radius:8px;
+                border:1px solid #444;
+                background:#0d0d0d;
+                color:#fff;
+              "
+            >
+
+            <button type="submit">
+              Submit Callback URL
+            </button>
+          </form>
+        `
+        : ""
+    }
+
+    <pre>${
+      escapeHtml(
+        state.robinhood.authOutput ||
+        "Authentication has not been started."
+      )
+    }</pre>
+  </div>
   <div class="card">
     <h2>Robinhood Read-Only Check</h2>
 
@@ -1526,7 +1790,66 @@ const server = http.createServer(async (req, res) => {
         }
       });
     }
+    // --------------------------------------------------------
+    // START ROBINHOOD AUTH
+    // --------------------------------------------------------
 
+    if (
+      req.method === "POST" &&
+      url.pathname === "/admin/robinhood-auth-start"
+    ) {
+      if (!isAdmin(req)) {
+        return sendJson(res, 401, {
+          error: "Unauthorized"
+        });
+      }
+
+      startRobinhoodAuthentication();
+
+      res.writeHead(303, {
+        Location: "/admin"
+      });
+
+      return res.end();
+    }
+
+    // --------------------------------------------------------
+    // SUBMIT ROBINHOOD CALLBACK
+    // --------------------------------------------------------
+
+    if (
+      req.method === "POST" &&
+      url.pathname === "/admin/robinhood-auth-callback"
+    ) {
+      if (!isAdmin(req)) {
+        return sendJson(res, 401, {
+          error: "Unauthorized"
+        });
+      }
+
+      try {
+        const body = await readBody(req);
+        const form = parseForm(body);
+
+        submitRobinhoodCallback(
+          form.callback_url
+        );
+
+        res.writeHead(303, {
+          Location: "/admin"
+        });
+
+        return res.end();
+      } catch (error) {
+        return send(
+          res,
+          400,
+          `Robinhood authentication error:\n${
+            String(error.message || error)
+          }`
+        );
+      }
+    }
     // --------------------------------------------------------
     // NOT FOUND
     // --------------------------------------------------------
