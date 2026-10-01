@@ -219,7 +219,32 @@ const state = {
     latest: null,
     bySymbol: {}
   },
+  execution: {
+    enabled: ROBINHOOD_EXECUTION_ENABLED,
+    liveSubmissionEnabled: LIVE_ORDER_SUBMISSION_ENABLED,
 
+    evaluated: 0,
+    approved: 0,
+    blocked: 0,
+    previewed: 0,
+    submitted: 0,
+    failed: 0,
+
+    running: false,
+
+    latestProposal: null,
+    latestResult: null,
+    latestError: null,
+
+    limits: {
+      minConfidence: MIN_EXECUTION_CONFIDENCE,
+      maxPositionDollars: MAX_POSITION_DOLLARS,
+      maxTotalExposureDollars: MAX_TOTAL_EXPOSURE_DOLLARS,
+      maxOpenPositions: MAX_OPEN_POSITIONS,
+      maxSignalAgeMs: MAX_EXECUTION_SIGNAL_AGE_MS,
+      maxSpreadPct: MAX_EXECUTION_SPREAD_PCT
+    }
+  },
   robinhood: {
   statusOutput: "",
   accountOutput: "",
