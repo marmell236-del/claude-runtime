@@ -31,6 +31,31 @@ if (!SCANNER_BRIDGE_TOKEN) {
 const ROBINHOOD_EXECUTION_ENABLED = false;
 const DECISION_MODE_ENABLED = true;
 
+// ============================================================
+// LIVE EXECUTION SAFETY LIMITS
+// ============================================================
+
+// Keep FALSE until the complete execution path passes testing.
+const LIVE_ORDER_SUBMISSION_ENABLED = false;
+
+// Only BUY_CANDIDATE decisions at or above this confidence
+// can progress to the execution gate.
+const MIN_EXECUTION_CONFIDENCE = 80;
+
+// Hard dollar limits for the $500 agentic account.
+const MAX_POSITION_DOLLARS = 100;
+const MAX_TOTAL_EXPOSURE_DOLLARS = 300;
+
+// Limit simultaneous exposure.
+const MAX_OPEN_POSITIONS = 3;
+
+// Reject stale signals before execution.
+const MAX_EXECUTION_SIGNAL_AGE_MS = 60 * 1000;
+
+// Liquidity protection.
+const MAX_EXECUTION_SPREAD_PCT = 0.75;
+
+// Existing bridge/decision settings.
 const MAX_SIGNAL_AGE_MS = 3 * 60 * 1000;
 const DECISION_COOLDOWN_MS = 5 * 60 * 1000;
 const MAX_BODY_BYTES = 1024 * 1024;
