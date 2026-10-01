@@ -820,6 +820,34 @@ function sendAdminTestSignal() {
     test_signal: true
   });
 }
+function sendRobinhoodResearchTest() {
+  const now = new Date().toISOString();
+
+  return acceptBridgeSignal({
+    symbol: "AAPL",
+    price: 1,
+    score: 7,
+    market_session: "closed",
+    lifecycle: "WATCH",
+    scanner_generated_at: now,
+
+    reasons: [
+      "Administrative Robinhood read-only research test"
+    ],
+
+    risk_factors: [
+      "Synthetic scanner inputs; Robinhood data must be used for verification"
+    ],
+
+    warnings: [
+      "RESEARCH TEST ONLY",
+      "NO ORDER EXECUTION"
+    ],
+
+    research_test: true,
+    test_signal: false
+  });
+}
 // ============================================================
 // CLAUDE / ROBINHOOD STATUS
 // ============================================================
@@ -1478,6 +1506,23 @@ function renderAdminPage() {
       </button>
     </form>
   </div>
+    <div class="card">
+    <h2>Robinhood Research Test</h2>
+
+    <p>
+      Runs a real-symbol AAPL research test using authenticated
+      Robinhood READ-ONLY tools. No order can be submitted.
+    </p>
+
+    <form
+      method="post"
+      action="/admin/robinhood-research-test"
+    >
+      <button type="submit">
+        Run Robinhood Research Test
+      </button>
+    </form>
+  </div>
   <div class="card">
     <h2>Latest Dry-Run Decision</h2>
     <pre>${escapeHtml(latestDecision)}</pre>
@@ -1999,6 +2044,34 @@ const server = http.createServer(async (req, res) => {
             String(error.message || error)
           }`
         );
+      }
+    }
+        // --------------------------------------------------------
+    // ROBINHOOD RESEARCH TEST
+    // --------------------------------------------------------
+
+    if (
+      req.method === "POST" &&
+      url.pathname === "/admin/robinhood-research-test"
+    ) {
+      if (!isAdmin(req)) {
+        return sendJson(res, 401, {
+          error: "Unauthorized"
+        });
+      }
+
+      try {
+        sendRobinhoodResearchTest();
+
+        res.writeHead(303, {
+          Location: "/admin"
+        });
+
+        return res.end();
+      } catch (error) {
+        return sendJson(res, 500, {
+          error: String(error.message || error)
+        });
       }
     }
         // --------------------------------------------------------
