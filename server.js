@@ -748,6 +748,25 @@ async function runDryDecision(signal) {
       created_at: new Date().toISOString(),
       execution_enabled: false
     };
+    
+        const gateResult = executionGate(
+      signal,
+      state.decisions.latest
+    );
+
+    state.execution.latestProposal = {
+      symbol: signal.symbol,
+      decision,
+      confidence,
+      max_position_dollars:
+        gateResult.proposedMaxPositionDollars,
+      approved: gateResult.approved,
+      preview_allowed:
+        gateResult.preview_allowed,
+      submission_allowed:
+        gateResult.submission_allowed,
+      created_at: new Date().toISOString()
+    };
 
     state.decisions.completed++;
     return;
