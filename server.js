@@ -1025,6 +1025,95 @@ ${JSON.stringify(signal, null, 2)}
       execution_enabled: false
     };
 
+    if (signal.strategy === "MICRO_V4") {
+      const gateResult = executionGate(
+        signal,
+        state.decisions.latest
+      );
+
+      const currentPrice =
+        Number(
+          state.decisions.latest?.market_context?.current_price
+        );
+
+      const invalidation =
+        Number(signal?.risk_model?.invalidation);
+
+      let proposal = {
+        strategy: "MICRO_V4",
+        symbol: signal.symbol,
+        approved: gateResult.approved,
+        blocks: gateResult.blocks,
+        cautions: gateResult.cautions,
+        proposed_quantity: null,
+        proposed_limit_price: null,
+        structural_invalidation:
+          Number.isFinite(invalidation)
+            ? invalidation
+            : null,
+        proposed_notional: null,
+        proposed_risk_dollars: null,
+        preview_allowed: false,
+        submission_allowed: false,
+        execution_enabled: false,
+        created_at: new Date().toISOString()
+      };
+
+      if (
+        gateResult.approved &&
+        Number.isFinite(currentPrice) &&
+        currentPrice > 0 &&
+        Number.isFinite(invalidation) &&
+        invalidation > 0 &&
+        invalidation < currentPrice
+      ) {
+        const limitPrice =
+          Math.ceil(currentPrice * 1.001 * 100) / 100;
+
+        const riskPerShare =
+          limitPrice - invalidation;
+
+        const byNotional =
+          Math.floor(100 / limitPrice);
+
+        const byRisk =
+          riskPerShare > 0
+            ? Math.floor(3 / riskPerShare)
+            : 0;
+
+        const quantity =
+          Math.max(
+            0,
+            Math.min(
+              100,
+              byNotional,
+              byRisk
+            )
+          );
+
+        if (quantity > 0) {
+          proposal = {
+            ...proposal,
+            proposed_quantity: quantity,
+            proposed_limit_price: limitPrice,
+            proposed_notional:
+              Math.round(
+                quantity * limitPrice * 100
+              ) / 100,
+            proposed_risk_dollars:
+              Math.round(
+                quantity *
+                riskPerShare *
+                100
+              ) / 100
+          };
+        }
+      }
+
+      state.execution.latestProposal =
+        proposal;
+    }
+
     state.decisions.completed++;
   } catch (error) {
     state.decisions.failed++;
