@@ -842,6 +842,140 @@ async function runDryDecision(signal) {
     score: signal.score
   };
 
+  if (
+    signal.test_signal === true &&
+    signal.strategy === "MICRO_V4"
+  ) {
+    try {
+      const decision = "BUY_CANDIDATE";
+      const confidence = 95;
+
+      state.decisions.latest = {
+        decision,
+        confidence,
+        symbol: signal.symbol,
+        summary:
+          "Deterministic synthetic Micro V4 validation.",
+        positive_factors: [
+          "Synthetic test satisfies Micro bridge inputs"
+        ],
+        risk_factors: [],
+        missing_information: [],
+        invalidation_conditions: [
+          "Synthetic structural invalidation"
+        ],
+        market_context: {
+          current_price: signal.price,
+          bid: signal.price - 0.01,
+          ask: signal.price,
+          spread_pct: signal.spread_pct,
+          trend: "synthetic",
+          vwap_context: "above_vwap",
+          technical_context: "synthetic_test"
+        },
+        account_context: {
+          cash_available: 500,
+          buying_power: 500,
+          existing_position: false
+        },
+        research_performed: [
+          "deterministic_synthetic_test"
+        ],
+        scanner_score: signal.score,
+        scanner_lifecycle: signal.lifecycle,
+        market_session: signal.market_session,
+        robinhood_research_enabled: false,
+        created_at: new Date().toISOString(),
+        execution_enabled: false
+      };
+
+      const gateResult = executionGate(
+        signal,
+        state.decisions.latest
+      );
+
+      const currentPrice = Number(signal.price);
+      const invalidation =
+        Number(signal?.risk_model?.invalidation);
+
+      let proposal = {
+        strategy: "MICRO_V4",
+        symbol: signal.symbol,
+        synthetic_test: true,
+        approved: gateResult.approved,
+        blocks: gateResult.blocks,
+        cautions: gateResult.cautions,
+        proposed_quantity: null,
+        proposed_limit_price: null,
+        structural_invalidation:
+          Number.isFinite(invalidation)
+            ? invalidation
+            : null,
+        proposed_notional: null,
+        proposed_risk_dollars: null,
+        preview_allowed: false,
+        submission_allowed: false,
+        execution_enabled: false,
+        robinhood_tools_used: false,
+        created_at: new Date().toISOString()
+      };
+
+      if (
+        gateResult.approved &&
+        Number.isFinite(currentPrice) &&
+        currentPrice > 0 &&
+        Number.isFinite(invalidation) &&
+        invalidation > 0 &&
+        invalidation < currentPrice
+      ) {
+        const limitPrice =
+          Math.ceil(currentPrice * 1.001 * 100) / 100;
+        const riskPerShare =
+          limitPrice - invalidation;
+        const byNotional =
+          Math.floor(100 / limitPrice);
+        const byRisk =
+          riskPerShare > 0
+            ? Math.floor(3 / riskPerShare)
+            : 0;
+        const quantity =
+          Math.max(
+            0,
+            Math.min(100, byNotional, byRisk)
+          );
+
+        if (quantity > 0) {
+          proposal = {
+            ...proposal,
+            proposed_quantity: quantity,
+            proposed_limit_price: limitPrice,
+            proposed_notional:
+              Math.round(quantity * limitPrice * 100) / 100,
+            proposed_risk_dollars:
+              Math.round(quantity * riskPerShare * 100) / 100
+          };
+        }
+      }
+
+      state.execution.latestProposal = proposal;
+      state.decisions.completed++;
+    } catch (error) {
+      state.decisions.failed++;
+      state.decisions.latest = {
+        decision: "PASS",
+        confidence: 0,
+        symbol: signal.symbol,
+        summary: "Synthetic Micro decision error.",
+        error: String(error.message || error),
+        execution_enabled: false,
+        created_at: new Date().toISOString()
+      };
+    } finally {
+      state.decisions.running = false;
+    }
+    return;
+  }
+
   const prompt = `
 Analyze this scanner signal using Robinhood READ-ONLY market
 and account data where useful.
