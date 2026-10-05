@@ -1128,6 +1128,75 @@ function sendAdminTestSignal() {
     test_signal: true
   });
 }
+function runMicroSyntheticTest() {
+  const signal = validateSignal({
+    strategy: "MICRO_V4",
+    strategy_version: "4.0.0",
+    symbol: "TEST",
+    price: 10.00,
+    score: 9.5,
+    market_session: "regular",
+    lifecycle: "BUY_CANDIDATE",
+    scanner_generated_at: new Date().toISOString(),
+    spread_pct: 0.20,
+    above_vwap: true,
+    relative_minute_volume: 2.50,
+    volume_acceleration: 1.60,
+    risk_model: {
+      invalidation: 9.90,
+      structure_risk_pct: 0.75
+    },
+    test_signal: true
+  });
+
+  const decision = {
+    decision: "BUY_CANDIDATE",
+    confidence: 95,
+    symbol: "TEST",
+    market_context: {
+      current_price: 10.00,
+      bid: 9.99,
+      ask: 10.00,
+      spread_pct: 0.10
+    },
+    account_context: {
+      cash_available: 500,
+      buying_power: 500,
+      existing_position: false
+    },
+    research_performed: ["synthetic_test_only"],
+    execution_enabled: false
+  };
+
+  const gateResult = executionGate(signal, decision);
+  const limitPrice = 10.01;
+  const riskPerShare = limitPrice - 9.90;
+  const quantity = Math.min(
+    Math.floor(100 / limitPrice),
+    Math.floor(3 / riskPerShare)
+  );
+
+  state.execution.latestProposal = {
+    synthetic_test: true,
+    strategy: "MICRO_V4",
+    symbol: "TEST",
+    approved: gateResult.approved,
+    blocks: gateResult.blocks,
+    proposed_quantity: quantity,
+    proposed_limit_price: limitPrice,
+    structural_invalidation: 9.90,
+    proposed_notional: Number((quantity * limitPrice).toFixed(2)),
+    proposed_risk_dollars: Number((quantity * riskPerShare).toFixed(2)),
+    preview_allowed: false,
+    submission_allowed: false,
+    execution_enabled: false,
+    robinhood_tools_used: false,
+    created_at: new Date().toISOString()
+  };
+
+  return state.execution.latestProposal;
+}
+
 function sendRobinhoodResearchTest() {
   const now = new Date().toISOString();
 
@@ -2385,6 +2454,23 @@ const server = http.createServer(async (req, res) => {
         // --------------------------------------------------------
     // ADMIN TEST SIGNAL
     // --------------------------------------------------------
+
+    if (
+      req.method === "POST" &&
+      url.pathname === "/admin/micro-v4-test"
+    ) {
+      if (!isAdmin(req)) {
+        return sendJson(res, 401, { error: "Unauthorized" });
+      }
+
+      try {
+        return sendJson(res, 200, runMicroSyntheticTest());
+      } catch (error) {
+        return sendJson(res, 500, {
+          error: String(error.message || error)
+        });
+      }
+    }
 
     if (
       req.method === "POST" &&
