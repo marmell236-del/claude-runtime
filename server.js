@@ -1595,6 +1595,16 @@ function renderAdminPage() {
     ? JSON.stringify(state.decisions.latest, null, 2)
     : "No decision produced yet.";
 
+  const latestMicroSignal = state.bridge.microV4.latestSignal
+    ? JSON.stringify(state.bridge.microV4.latestSignal, null, 2)
+    : "No Micro V4 signal received yet.";
+
+  const latestMicroProposal =
+    state.execution.latestProposal &&
+    state.execution.latestProposal.strategy === "MICRO_V4"
+      ? JSON.stringify(state.execution.latestProposal, null, 2)
+      : "No Micro V4 execution proposal produced yet.";
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -1893,6 +1903,20 @@ function renderAdminPage() {
       </button>
     </form>
   </div>
+  <div class="card">
+    <h2>Micro V4 Status</h2>
+    <p>
+      Live trading: DISABLED<br>
+      Order submission: DISABLED<br>
+      Micro signals received:
+      ${state.bridge.microV4.received}
+    </p>
+    <h3>Latest Micro Signal</h3>
+    <pre>${escapeHtml(latestMicroSignal)}</pre>
+    <h3>Latest Locked Execution Proposal</h3>
+    <pre>${escapeHtml(latestMicroProposal)}</pre>
+  </div>
+
   <div class="card">
     <h2>Latest Dry-Run Decision</h2>
     <pre>${escapeHtml(latestDecision)}</pre>
