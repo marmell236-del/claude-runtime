@@ -947,6 +947,118 @@ ${JSON.stringify(signal, null, 2)}
       execution_enabled: false
     };
 
+    // Always run the deterministic execution gate after Robinhood research.
+    // This creates an auditable proposal only; write/order tools remain
+    // disallowed and submission remains hard-disabled.
+    const gateResult = executionGate(
+      signal,
+      state.decisions.latest
+    );
+
+    const microRisk =
+      signal?.strategy === "MICRO_V4"
+        ? (signal?.risk_model || null)
+        : null;
+
+    const livePrice =
+      Number(state.decisions.latest?.market_context?.current_price);
+
+    const proposedNotional =
+      Math.min(
+        signal?.strategy === "MICRO_V4" ? 100 : MAX_POSITION_DOLLARS,
+        gateResult.proposedMaxPositionDollars || 0
+      );
+
+    let proposedQuantity = null;
+    let proposedLimitPrice = null;
+    let proposedRiskDollars = null;
+
+    if (
+      gateResult.approved &&
+      Number.isFinite(livePrice) &&
+      livePrice > 0
+    ) {
+      proposedLimitPrice =
+        Math.ceil(livePrice * 1.001 * 100) / 100;
+
+      let byNotional =
+        Math.floor(proposedNotional / proposedLimitPrice);
+
+      let byRisk = byNotional;
+
+      if (microRisk) {
+        const invalidation =
+          Number(microRisk.invalidation);
+
+        const riskPerShare =
+          proposedLimitPrice - invalidation;
+
+        if (
+          Number.isFinite(riskPerShare) &&
+          riskPerShare > 0
+        ) {
+          byRisk =
+            Math.floor(3 / riskPerShare);
+        } else {
+          byRisk = 0;
+        }
+      }
+
+      proposedQuantity =
+        Math.max(
+          0,
+          Math.min(byNotional, byRisk)
+        );
+
+      if (
+        microRisk &&
+        proposedQuantity > 0
+      ) {
+        proposedRiskDollars =
+          proposedQuantity *
+          (
+            proposedLimitPrice -
+            Number(microRisk.invalidation)
+          );
+      }
+    }
+
+    state.execution.latestProposal = {
+      strategy: signal?.strategy || "MAIN",
+      symbol: signal.symbol,
+      decision,
+      confidence,
+      approved: gateResult.approved,
+      blocks: gateResult.blocks,
+      cautions: gateResult.cautions,
+      max_position_dollars: proposedNotional,
+      proposed_quantity: proposedQuantity,
+      proposed_limit_price: proposedLimitPrice,
+      structural_invalidation:
+        microRisk?.invalidation ?? null,
+      proposed_risk_dollars:
+        Number.isFinite(proposedRiskDollars)
+          ? Math.round(proposedRiskDollars * 100) / 100
+          : null,
+      robinhood_review_shape:
+        proposedQuantity > 0 && proposedLimitPrice
+          ? {
+              symbol: signal.symbol,
+              side: "buy",
+              type: "limit",
+              quantity: String(proposedQuantity),
+              limit_price:
+                proposedLimitPrice.toFixed(2),
+              time_in_force: "gfd",
+              market_hours: "regular_hours"
+            }
+          : null,
+      preview_allowed: false,
+      submission_allowed: false,
+      execution_enabled: false,
+      created_at: new Date().toISOString()
+    };
+
     state.decisions.completed++;
   } catch (error) {
     state.decisions.failed++;
