@@ -205,7 +205,12 @@ const state = {
     rejected: 0,
     lastReceivedAt: null,
     latestSignal: null,
-    latestRejection: null
+    latestRejection: null,
+    microV4: {
+      received: 0,
+      lastReceivedAt: null,
+      latestSignal: null
+    }
   },
 
   decisions: {
@@ -979,6 +984,13 @@ function acceptBridgeSignal(raw) {
     new Date().toISOString();
 
   state.bridge.latestSignal = signal;
+
+  if (signal.strategy === "MICRO_V4") {
+    state.bridge.microV4.received++;
+    state.bridge.microV4.lastReceivedAt =
+      state.bridge.lastReceivedAt;
+    state.bridge.microV4.latestSignal = signal;
+  }
 
   setImmediate(() => {
     runDryDecision(signal).catch(console.error);
@@ -1835,7 +1847,17 @@ const server = http.createServer(async (req, res) => {
           latest_signal:
             state.bridge.latestSignal,
           latest_rejection:
-            state.bridge.latestRejection
+            state.bridge.latestRejection,
+          micro_v4: {
+            received:
+              state.bridge.microV4.received,
+            last_received_at:
+              state.bridge.microV4.lastReceivedAt,
+            latest_signal:
+              state.bridge.microV4.latestSignal,
+            live_trading_enabled: false,
+            order_submission_enabled: false
+          }
         },
 
         decisions: {
