@@ -36,7 +36,7 @@ const DECISION_MODE_ENABLED = true;
 // ============================================================
 
 // Keep FALSE until the complete execution path passes testing.
-const LIVE_ORDER_SUBMISSION_ENABLED = false;
+const LIVE_ORDER_SUBMISSION_ENABLED = false;\n\n// MICRO V4 has independent authorization. Keep both FALSE until the\n// user explicitly enables Micro live trading.\nconst MICRO_LIVE_TRADING_ENABLED = false;\nconst MICRO_ORDER_SUBMISSION_ENABLED = false;
 
 // Only BUY_CANDIDATE decisions at or above this confidence
 // can progress to the execution gate.
@@ -756,8 +756,8 @@ async function runDryDecision(signal) {
 
     state.execution.latestProposal = {
       symbol: signal.symbol,
-      decision,
-      confidence,
+      decision: state.decisions.latest.decision,
+      confidence: state.decisions.latest.confidence,
       max_position_dollars:
         gateResult.proposedMaxPositionDollars,
       approved: gateResult.approved,
