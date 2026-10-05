@@ -858,6 +858,22 @@ the signal's symbol.
 
 Where useful, inspect:
 
+For a MICRO_V4 signal, prioritize these READ-ONLY checks before
+returning BUY_CANDIDATE:
+- current equity quote and spread
+- equity Level 2 / price book
+- equity tradability and any halt/session restriction
+- current position in the symbol
+- available cash or buying power
+- recent price history / immediate momentum
+- current catalyst or news context when an available read-only
+  Robinhood tool can provide it
+
+For MICRO_V4, treat Level 2 as confirmation rather than a complete
+representation of all market liquidity. If required live information
+is missing, stale, contradictory, or materially weaker than the
+scanner snapshot, do not upgrade the signal to BUY_CANDIDATE.
+
 - current equity quote
 - recent price history
 - technical indicators
