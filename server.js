@@ -2017,6 +2017,11 @@ const server = http.createServer(async (req, res) => {
               state.bridge.microV4.lastReceivedAt,
             latest_signal:
               state.bridge.microV4.latestSignal,
+            latest_execution_proposal:
+              state.execution.latestProposal &&
+              state.execution.latestProposal.strategy === "MICRO_V4"
+                ? state.execution.latestProposal
+                : null,
             live_trading_enabled: false,
             order_submission_enabled: false
           }
