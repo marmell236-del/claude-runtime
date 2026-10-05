@@ -266,6 +266,7 @@ const state = {
   robinhood: {
   statusOutput: "",
   cliDiagnosticsOutput: "",
+  singleToolDiagnosticsOutput: "",
   accountOutput: "",
   accountRunning: false,
   accountLastUpdated: null,
@@ -1390,6 +1391,50 @@ function sendRobinhoodResearchTest() {
 // CLAUDE / ROBINHOOD STATUS
 // ============================================================
 
+async function refreshClaudeSingleToolDiagnostics() {
+  state.robinhood.singleToolDiagnosticsOutput =
+    "Testing one read-only Robinhood tool permission...";
+
+  const args = [
+    "-p",
+    "--allowedTools",
+    "mcp__robinhood-trading__get_equity_quotes"
+  ];
+
+  const prompt = [
+    "Do not call any tool.",
+    "Reply with exactly: READ_ONLY_PERMISSION_TEST"
+  ].join("\n");
+
+  const result = await new Promise(resolve => {
+    execFile(
+      "claude",
+      args,
+      {
+        timeout: 60000,
+        maxBuffer: 2 * 1024 * 1024,
+        env: process.env
+      },
+      (error, stdout, stderr) => {
+        resolve({
+          args,
+          exit_error:
+            error ? String(error.message || error) : null,
+          exit_code:
+            error && Number.isInteger(error.code)
+              ? error.code
+              : 0,
+          stdout: stdout || "",
+          stderr: stderr || ""
+        });
+      }
+    ).stdin.end(prompt);
+  });
+
+  state.robinhood.singleToolDiagnosticsOutput =
+    JSON.stringify(result, null, 2);
+}
+
 async function refreshClaudeCliDiagnostics() {
   state.robinhood.cliDiagnosticsOutput =
     "Checking Claude CLI version/help...";
@@ -1946,6 +1991,22 @@ function renderAdminPage() {
         "CLI diagnostics have not been run."
       )
     }</pre>
+
+    <form
+      method="post"
+      action="/admin/claude-single-tool-diagnostics"
+    >
+      <button type="submit">
+        Test One Read-Only Tool Permission
+      </button>
+    </form>
+
+    <pre>${
+      escapeHtml(
+        state.robinhood.singleToolDiagnosticsOutput ||
+        "Single-tool diagnostics have not been run."
+      )
+    }</pre>
   </div>
   <div class="card">
     <h2>Robinhood Authentication</h2>
@@ -2487,6 +2548,20 @@ const server = http.createServer(async (req, res) => {
     // --------------------------------------------------------
     // CHECK CLAUDE RUNTIME
     // --------------------------------------------------------
+
+    if (
+      req.method === "POST" &&
+      url.pathname === "/admin/claude-single-tool-diagnostics"
+    ) {
+      if (!isAdmin(req)) {
+        return sendJson(res, 401, { error: "Unauthorized" });
+      }
+
+      await refreshClaudeSingleToolDiagnostics();
+
+      res.writeHead(303, { Location: "/admin" });
+      return res.end();
+    }
 
     if (
       req.method === "POST" &&
