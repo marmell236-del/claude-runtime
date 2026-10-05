@@ -1344,28 +1344,45 @@ function sendRobinhoodResearchTest() {
   const now = new Date().toISOString();
 
   return acceptBridgeSignal({
+    strategy: "MICRO_V4",
+    strategy_version: "4.0.0",
+
     symbol: "AAPL",
     price: 1,
-    score: 7,
-    market_session: "closed",
-    lifecycle: "WATCH",
+    score: 9.5,
+
+    market_session: "regular",
+    lifecycle: "BUY_CANDIDATE",
+    setup: "MICRO_V4_ROBINHOOD_READ_TEST",
+
     scanner_generated_at: now,
 
+    spread_pct: 0.20,
+    above_vwap: true,
+    relative_minute_volume: 2.50,
+    volume_acceleration: 1.60,
+
+    risk_model: {
+      invalidation: 0.995,
+      structure_risk_pct: 0.50
+    },
+
     reasons: [
-      "Administrative Robinhood read-only research test"
+      "Administrative Micro V4 Robinhood read-only validation"
     ],
 
     risk_factors: [
-      "Synthetic scanner inputs; Robinhood data must be used for verification"
+      "Synthetic scanner values; Robinhood live data must verify AAPL"
     ],
 
     warnings: [
-      "RESEARCH TEST ONLY",
-      "NO ORDER EXECUTION"
+      "READ-ONLY RESEARCH TEST",
+      "NO ORDER PREVIEW OR EXECUTION"
     ],
 
     research_test: true,
-    test_signal: false
+    test_signal: false,
+    execution_enabled: false
   });
 }
 // ============================================================
