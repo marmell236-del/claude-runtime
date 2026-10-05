@@ -126,6 +126,19 @@ const ROBINHOOD_READ_TOOLS = [
   "mcp__robinhood-trading__search"
 ];
 
+const MICRO_ROBINHOOD_READ_TOOLS = [
+  "mcp__robinhood-trading__get_accounts",
+  "mcp__robinhood-trading__get_portfolio",
+  "mcp__robinhood-trading__get_equity_positions",
+  "mcp__robinhood-trading__get_equity_orders",
+  "mcp__robinhood-trading__get_equity_quotes",
+  "mcp__robinhood-trading__get_equity_historicals",
+  "mcp__robinhood-trading__get_equity_price_book",
+  "mcp__robinhood-trading__get_equity_technical_indicators",
+  "mcp__robinhood-trading__get_equity_tradability",
+  "mcp__robinhood-trading__search"
+];
+
 // Anything matching these classes is explicitly forbidden
 // from the read-only account path.
 
@@ -1102,12 +1115,15 @@ ${JSON.stringify(signal, null, 2)}
         "mcp__robinhood-trading__*"
       ];
     } else {
+      const allowedReadTools =
+        signal.strategy === "MICRO_V4"
+          ? MICRO_ROBINHOOD_READ_TOOLS
+          : ROBINHOOD_READ_TOOLS;
+
       args = [
         "-p",
         "--allowedTools",
-        ROBINHOOD_READ_TOOLS.join(","),
-        "--disallowedTools",
-        ROBINHOOD_WRITE_TOOLS.join(",")
+        allowedReadTools.join(",")
       ];
     }
 
