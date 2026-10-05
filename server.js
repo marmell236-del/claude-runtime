@@ -265,6 +265,7 @@ const state = {
   },
   robinhood: {
   statusOutput: "",
+  cliDiagnosticsOutput: "",
   accountOutput: "",
   accountRunning: false,
   accountLastUpdated: null,
@@ -1389,6 +1390,42 @@ function sendRobinhoodResearchTest() {
 // CLAUDE / ROBINHOOD STATUS
 // ============================================================
 
+async function refreshClaudeCliDiagnostics() {
+  state.robinhood.cliDiagnosticsOutput =
+    "Checking Claude CLI version/help...";
+
+  const runRaw = args =>
+    new Promise(resolve => {
+      execFile(
+        "claude",
+        args,
+        {
+          timeout: 30000,
+          maxBuffer: 2 * 1024 * 1024,
+          env: process.env
+        },
+        (error, stdout, stderr) => {
+          resolve({
+            args,
+            exit_error: error ? String(error.message || error) : null,
+            stdout: stdout || "",
+            stderr: stderr || ""
+          });
+        }
+      );
+    });
+
+  const version = await runRaw(["--version"]);
+  const help = await runRaw(["--help"]);
+
+  state.robinhood.cliDiagnosticsOutput =
+    JSON.stringify(
+      { version, help },
+      null,
+      2
+    );
+}
+
 async function refreshClaudeStatus() {
   state.robinhood.statusOutput = "Checking Claude MCP status...";
 
@@ -1891,6 +1928,22 @@ function renderAdminPage() {
       escapeHtml(
         state.robinhood.statusOutput ||
         "Claude status has not been checked."
+      )
+    }</pre>
+
+    <form
+      method="post"
+      action="/admin/claude-cli-diagnostics"
+    >
+      <button type="submit">
+        Check Claude CLI Options
+      </button>
+    </form>
+
+    <pre>${
+      escapeHtml(
+        state.robinhood.cliDiagnosticsOutput ||
+        "CLI diagnostics have not been run."
       )
     }</pre>
   </div>
@@ -2434,6 +2487,20 @@ const server = http.createServer(async (req, res) => {
     // --------------------------------------------------------
     // CHECK CLAUDE RUNTIME
     // --------------------------------------------------------
+
+    if (
+      req.method === "POST" &&
+      url.pathname === "/admin/claude-cli-diagnostics"
+    ) {
+      if (!isAdmin(req)) {
+        return sendJson(res, 401, { error: "Unauthorized" });
+      }
+
+      await refreshClaudeCliDiagnostics();
+
+      res.writeHead(303, { Location: "/admin" });
+      return res.end();
+    }
 
     if (
       req.method === "POST" &&
