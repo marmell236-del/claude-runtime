@@ -486,6 +486,10 @@ function validateSignal(raw) {
   signal.score = raw.score;
   signal.lifecycle = lifecycle || null;
   signal.market_session = marketSession || null;
+  signal.strategy =
+    String(raw.strategy || "MAIN").trim().toUpperCase();
+  signal.strategy_version =
+    raw.strategy_version || null;
 
   signal.reasons =
     cleanStringArray(raw.reasons);
@@ -628,6 +632,59 @@ function executionGate(signal, decision) {
 
   if (decision?.account_context?.existing_position === true) {
     cautions.push("Existing position already present");
+  }
+
+  if (signal?.strategy === "MICRO_V4") {
+    if (signal?.lifecycle !== "BUY_CANDIDATE") {
+      blocks.push(
+        "Micro lifecycle is not BUY_CANDIDATE"
+      );
+    }
+
+    if (signal?.above_vwap !== true) {
+      blocks.push(
+        "Micro entry is not above VWAP"
+      );
+    }
+
+    const relativeVolume =
+      Number(signal?.relative_minute_volume);
+
+    if (
+      !Number.isFinite(relativeVolume) ||
+      relativeVolume < 1.80
+    ) {
+      blocks.push(
+        "Micro relative minute volume below 1.80x"
+      );
+    }
+
+    const volumeAcceleration =
+      Number(signal?.volume_acceleration);
+
+    if (
+      !Number.isFinite(volumeAcceleration) ||
+      volumeAcceleration < 1.25
+    ) {
+      blocks.push(
+        "Micro volume acceleration below 1.25x"
+      );
+    }
+
+    const structureRisk =
+      Number(
+        signal?.risk_model?.structure_risk_pct
+      );
+
+    if (
+      !Number.isFinite(structureRisk) ||
+      structureRisk <= 0 ||
+      structureRisk > 0.80
+    ) {
+      blocks.push(
+        "Micro structure risk invalid or above 0.80%"
+      );
+    }
   }
 
   const approved = blocks.length === 0;
