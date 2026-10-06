@@ -235,6 +235,7 @@ const state = {
     skipped: 0,
     running: false,
     latest: null,
+    pendingMicro: null,
     bySymbol: {}
   },
   execution: {
@@ -816,10 +817,16 @@ function extractJsonObject(text) {
 async function runDryDecision(signal) {
   if (!DECISION_MODE_ENABLED) return;
 
-  if (
-    state.decisions.running ||
-    !decisionCooldownAllows(signal)
-  ) {
+  if (state.decisions.running) {
+    if (signal?.strategy === "MICRO_V4") {
+      state.decisions.pendingMicro = signal;
+    } else {
+      state.decisions.skipped++;
+    }
+    return;
+  }
+
+  if (!decisionCooldownAllows(signal)) {
     state.decisions.skipped++;
     return;
   }
@@ -1299,6 +1306,17 @@ ${JSON.stringify(signal, null, 2)}
     };
   } finally {
     state.decisions.running = false;
+
+    const pendingMicro =
+      state.decisions.pendingMicro;
+    state.decisions.pendingMicro = null;
+
+    if (pendingMicro) {
+      setImmediate(() => {
+        runDryDecision(pendingMicro)
+          .catch(console.error);
+      });
+    }
   }
 }
 // ============================================================
