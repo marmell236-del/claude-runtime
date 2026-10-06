@@ -1867,6 +1867,53 @@ function renderAdminPage() {
       ? JSON.stringify(state.execution.latestProposal, null, 2)
       : "No Micro V4 execution proposal produced yet.";
 
+  const microSignal = state.bridge.microV4.latestSignal;
+  const microDecision =
+    state.decisions.latest &&
+    state.decisions.latest.symbol === microSignal?.symbol
+      ? state.decisions.latest
+      : null;
+  const microProposal =
+    state.execution.latestProposal &&
+    state.execution.latestProposal.strategy === "MICRO_V4" &&
+    state.execution.latestProposal.symbol === microSignal?.symbol
+      ? state.execution.latestProposal
+      : null;
+
+  const extendedHoursMonitor = microSignal
+    ? JSON.stringify(
+        {
+          mode:
+            microSignal.market_session === "regular"
+              ? "REGULAR SESSION"
+              : "EXTENDED-HOURS RESEARCH ONLY",
+          symbol: microSignal.symbol,
+          strategy: microSignal.strategy,
+          session: microSignal.market_session,
+          scanner_score: microSignal.score,
+          lifecycle: microSignal.lifecycle,
+          scanner_price: microSignal.price,
+          received_at: state.bridge.microV4.lastReceivedAt,
+          robinhood_verdict: microDecision
+            ? {
+                decision: microDecision.decision,
+                confidence: microDecision.confidence,
+                summary: microDecision.summary,
+                market_context: microDecision.market_context,
+                risk_factors: microDecision.risk_factors,
+                missing_information: microDecision.missing_information,
+                research_performed: microDecision.research_performed
+              }
+            : null,
+          locked_proposal: microProposal,
+          live_trading_enabled: false,
+          order_submission_enabled: false
+        },
+        null,
+        2
+      )
+    : "No Micro V4 market candidate received yet.";
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -2197,6 +2244,16 @@ function renderAdminPage() {
       </button>
     </form>
   </div>
+  <div class="card">
+    <h2>Extended-Hours Micro Monitor</h2>
+    <p class="warning">
+      Extended-hours candidates are research only.
+      Execution remains restricted to the regular session,
+      and live order submission is disabled.
+    </p>
+    <pre>${escapeHtml(extendedHoursMonitor)}</pre>
+  </div>
+
   <div class="card">
     <h2>Micro V4 Status</h2>
     <p>
