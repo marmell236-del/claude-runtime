@@ -1142,10 +1142,15 @@ ${JSON.stringify(signal, null, 2)}
       ];
     }
 
+    const claudeTimeoutMs =
+      signal.strategy === "MICRO_V4"
+        ? 20000
+        : 180000;
+
     const result = await runClaude(
       args,
       prompt,
-      180000
+      claudeTimeoutMs
     );
 
     const parsed =
