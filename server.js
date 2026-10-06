@@ -1437,11 +1437,12 @@ function acceptBridgeSignal(raw) {
 
   if (
     signal.strategy === "MICRO_V4" &&
-    ["WATCH", "DEVELOPING", "QUALIFIED"].includes(signal.lifecycle)
+    signal.research_only === true
   ) {
     setImmediate(() => {
       preResearchMicro(signal).catch(console.error);
     });
+    return signal;
   }
 
   setImmediate(() => {
