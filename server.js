@@ -565,9 +565,22 @@ function signalSafetyAssessment(signal) {
     signal.lifecycle === "BUY_CANDIDATE" &&
     signal.market_session !== "regular"
   ) {
-    blocks.push(
-      "BUY_CANDIDATE rejected outside regular session"
-    );
+    const microResearchSession =
+      signal.strategy === "MICRO_V4" &&
+      (
+        signal.market_session === "premarket" ||
+        signal.market_session === "afterhours"
+      );
+
+    if (microResearchSession) {
+      cautions.push(
+        "Micro V4 extended-hours research only; execution remains blocked"
+      );
+    } else {
+      blocks.push(
+        "BUY_CANDIDATE rejected outside regular session"
+      );
+    }
   }
 
   return {
