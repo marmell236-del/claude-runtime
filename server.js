@@ -133,6 +133,7 @@ const MICRO_ROBINHOOD_READ_TOOLS = [
   "mcp__robinhood-trading__get_equity_orders",
   "mcp__robinhood-trading__get_equity_quotes",
   "mcp__robinhood-trading__get_equity_historicals",
+  "mcp__robinhood-trading__get_equity_fundamentals",
   "mcp__robinhood-trading__get_equity_price_book",
   "mcp__robinhood-trading__get_equity_technical_indicators",
   "mcp__robinhood-trading__get_equity_tradability",
@@ -1026,6 +1027,12 @@ You may use available Robinhood READ-ONLY tools to investigate
 the signal's symbol.
 
 Where useful, inspect:
+
+For a MICRO_V4 signal, first inspect the supplied
+market_intelligence_snapshot. It is computed from the scanner's live Alpaca
+SIP feed and should be treated as the primary high-speed tape/momentum
+snapshot. Do not repeat research already present there unless Robinhood data
+is needed to confirm a material discrepancy.
 
 For a MICRO_V4 signal, prioritize these READ-ONLY checks before
 returning BUY_CANDIDATE:
