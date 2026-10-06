@@ -227,6 +227,14 @@ const state = {
     }
   },
 
+  microResearch: {
+    cacheTtlMs: 15 * 60 * 1000,
+    bySymbol: {},
+    running: {},
+    completed: 0,
+    failed: 0
+  },
+
   decisions: {
     enabled: DECISION_MODE_ENABLED,
     executionEnabled: false,
@@ -773,6 +781,75 @@ function executionGate(signal, decision) {
   return result;
 }
 // ============================================================
+// MICRO PRE-RESEARCH CACHE
+// ============================================================
+
+function getCachedMicroResearch(symbol) {
+  const row = state.microResearch.bySymbol[symbol];
+  if (!row) return null;
+  const ageMs = Date.now() - new Date(row.researched_at).getTime();
+  if (!Number.isFinite(ageMs) || ageMs > state.microResearch.cacheTtlMs) {
+    return null;
+  }
+  return { ...row, age_ms: ageMs };
+}
+
+async function preResearchMicro(signal) {
+  if (!signal || signal.strategy !== "MICRO_V4") return;
+  const symbol = signal.symbol;
+  if (!symbol || state.microResearch.running[symbol]) return;
+  if (getCachedMicroResearch(symbol)) return;
+
+  state.microResearch.running[symbol] = true;
+  const prompt = `
+Research ${symbol} for a potential MICRO_V4 momentum setup using READ-ONLY
+Robinhood tools only. This is background research, not an entry decision.
+Prioritize float, shares outstanding, market cap, average volume, earnings
+context, available catalyst/company context, supply/dilution risk, and
+tradability. Never authorize an entry or use a write/order tool.
+
+Return ONLY valid JSON:
+{"symbol":"${symbol}","background_verdict":"CLEAR|CAUTION|UNKNOWN",
+"float":null,"shares_outstanding":null,"market_cap":null,
+"average_volume":null,"catalyst_context":"","supply_risks":[],
+"tradability_context":"","missing_information":[]}
+`;
+
+  try {
+    const args = [
+      "-p", "--allowedTools",
+      "mcp__robinhood-trading__get_equity_fundamentals",
+      "mcp__robinhood-trading__get_equity_tradability",
+      "mcp__robinhood-trading__get_equity_historicals",
+      "mcp__robinhood-trading__get_earnings_results",
+      "mcp__robinhood-trading__get_sec_filing_index",
+      "mcp__robinhood-trading__search"
+    ];
+    const result = await runClaude(args, prompt, 30000);
+    const parsed = extractJsonObject(result.stdout);
+    state.microResearch.bySymbol[symbol] = {
+      ...parsed, symbol,
+      researched_at: new Date().toISOString(),
+      research_only: true,
+      can_authorize_execution: false
+    };
+    state.microResearch.completed++;
+  } catch (error) {
+    state.microResearch.failed++;
+    state.microResearch.bySymbol[symbol] = {
+      symbol, background_verdict: "UNKNOWN",
+      error: String(error.message || error),
+      researched_at: new Date().toISOString(),
+      research_only: true,
+      can_authorize_execution: false
+    };
+  } finally {
+    delete state.microResearch.running[symbol];
+  }
+}
+
+
+// ============================================================
 // DRY-RUN DECISION ENGINE
 // ============================================================
 
@@ -1012,6 +1089,15 @@ async function runDryDecision(signal) {
     return;
   }
 
+  const cachedMicroResearch =
+    signal.strategy === "MICRO_V4"
+      ? getCachedMicroResearch(signal.symbol)
+      : null;
+
+  const enrichedSignal = cachedMicroResearch
+    ? { ...signal, cached_micro_background_research: cachedMicroResearch }
+    : signal;
+
   const prompt = `
 Analyze this scanner signal using Robinhood READ-ONLY market
 and account data where useful.
@@ -1131,7 +1217,7 @@ Return ONLY valid JSON in this exact general structure:
 
 Signal:
 
-${JSON.stringify(signal, null, 2)}
+${JSON.stringify(enrichedSignal, null, 2)}
 `;
 
   try {
@@ -1347,6 +1433,15 @@ function acceptBridgeSignal(raw) {
     state.bridge.microV4.lastReceivedAt =
       state.bridge.lastReceivedAt;
     state.bridge.microV4.latestSignal = signal;
+  }
+
+  if (
+    signal.strategy === "MICRO_V4" &&
+    ["WATCH", "DEVELOPING", "QUALIFIED"].includes(signal.lifecycle)
+  ) {
+    setImmediate(() => {
+      preResearchMicro(signal).catch(console.error);
+    });
   }
 
   setImmediate(() => {
