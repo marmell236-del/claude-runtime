@@ -1256,7 +1256,7 @@ ${JSON.stringify(enrichedSignal, null, 2)}
       args = [
         "-p",
         "--allowedTools",
-        ...allowedReadTools
+        allowedReadTools.join(",")
       ];
     }
 
