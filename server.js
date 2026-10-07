@@ -246,7 +246,12 @@ const state = {
     latest: null,
     pendingMicro: null,
     bySymbol: {},
-    history: []
+    history: [],
+    shadowIntelligence: {
+      received: 0,
+      lastReceivedAt: null,
+      bySymbol: {}
+    }
   },
   execution: {
     enabled: ROBINHOOD_EXECUTION_ENABLED,
@@ -2585,6 +2590,62 @@ const server = http.createServer(async (req, res) => {
         count: Math.min(limit, state.decisions.history.length),
         total_in_memory: state.decisions.history.length,
         decisions: state.decisions.history.slice(-limit).reverse()
+      });
+    }
+
+    // --------------------------------------------------------
+    // RECEIVE SHADOW INTELLIGENCE HEARTBEAT (READ-ONLY)
+    // --------------------------------------------------------
+
+    if (
+      req.method === "POST" &&
+      url.pathname === "/shadow/intelligence"
+    ) {
+      if (!bridgeAuthorized(req)) {
+        return sendJson(res, 401, { accepted: false, error: "Unauthorized" });
+      }
+
+      let raw;
+      try {
+        raw = JSON.parse(await readBody(req));
+      } catch (_) {
+        return sendJson(res, 400, { accepted: false, error: "Invalid JSON" });
+      }
+
+      const symbol = String(raw?.symbol || "").trim().toUpperCase();
+      if (!/^[A-Z0-9.\\-]{1,15}$/.test(symbol)) {
+        return sendJson(res, 400, { accepted: false, error: "Invalid symbol" });
+      }
+
+      if (
+        raw?.shadow_only !== true ||
+        raw?.can_authorize_execution !== false ||
+        raw?.execution_enabled !== false
+      ) {
+        return sendJson(res, 400, {
+          accepted: false,
+          error: "Shadow intelligence must be non-executable"
+        });
+      }
+
+      const receivedAt = new Date().toISOString();
+      state.decisions.shadowIntelligence.received++;
+      state.decisions.shadowIntelligence.lastReceivedAt = receivedAt;
+      state.decisions.shadowIntelligence.bySymbol[symbol] = {
+        symbol,
+        snapshot: raw.snapshot || {},
+        received_at: receivedAt,
+        shadow_only: true,
+        can_authorize_execution: false,
+        execution_enabled: false
+      };
+
+      return sendJson(res, 202, {
+        accepted: true,
+        symbol,
+        received_at: receivedAt,
+        shadow_only: true,
+        execution_enabled: false
       });
     }
 
