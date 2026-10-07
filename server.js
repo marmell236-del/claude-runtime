@@ -392,9 +392,28 @@ function runClaude(args, prompt, timeoutMs = 120000) {
       },
       (error, stdout, stderr) => {
         if (error) {
+          const diagnostic = {
+            message: error.message,
+            code: error.code ?? null,
+            signal: error.signal ?? null,
+            killed: Boolean(error.killed),
+            stderr: String(stderr || "").slice(-8000),
+            stdout_tail: String(stdout || "").slice(-4000),
+            at: new Date().toISOString()
+          };
+
+          console.error(
+            "[claude-invocation-error]",
+            JSON.stringify(diagnostic)
+          );
+
           reject(
             new Error(
-              `${error.message}\n${stderr || ""}`.trim()
+              [
+                error.message,
+                diagnostic.stderr,
+                diagnostic.stdout_tail
+              ].filter(Boolean).join("\\n").trim()
             )
           );
           return;
