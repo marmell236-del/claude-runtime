@@ -245,7 +245,8 @@ const state = {
     running: false,
     latest: null,
     pendingMicro: null,
-    bySymbol: {}
+    bySymbol: {},
+    history: []
   },
   execution: {
     enabled: ROBINHOOD_EXECUTION_ENABLED,
@@ -853,6 +854,15 @@ Return ONLY valid JSON:
 // DRY-RUN DECISION ENGINE
 // ============================================================
 
+function recordDecision(decision) {
+  if (!decision || !decision.symbol) return;
+  state.decisions.history.push(JSON.parse(JSON.stringify(decision)));
+  if (state.decisions.history.length > 500) {
+    state.decisions.history.splice(0, state.decisions.history.length - 500);
+  }
+}
+
+
 function decisionCooldownAllows(signal) {
   const previous =
     state.decisions.bySymbol[signal.symbol];
@@ -943,6 +953,7 @@ async function runDryDecision(signal) {
       created_at: new Date().toISOString()
     };
 
+    recordDecision(state.decisions.latest);
     state.decisions.completed++;
     return;
   }
@@ -1071,6 +1082,7 @@ async function runDryDecision(signal) {
       }
 
       state.execution.latestProposal = proposal;
+      recordDecision(state.decisions.latest);
       state.decisions.completed++;
     } catch (error) {
       state.decisions.failed++;
@@ -1083,6 +1095,7 @@ async function runDryDecision(signal) {
         execution_enabled: false,
         created_at: new Date().toISOString()
       };
+      recordDecision(state.decisions.latest);
     } finally {
       state.decisions.running = false;
     }
@@ -1384,6 +1397,7 @@ ${JSON.stringify(enrichedSignal, null, 2)}
         proposal;
     }
 
+    recordDecision(state.decisions.latest);
     state.decisions.completed++;
   } catch (error) {
     state.decisions.failed++;
@@ -1397,6 +1411,7 @@ ${JSON.stringify(enrichedSignal, null, 2)}
       created_at: new Date().toISOString(),
       execution_enabled: false
     };
+    recordDecision(state.decisions.latest);
   } finally {
     state.decisions.running = false;
 
@@ -2545,6 +2560,31 @@ const server = http.createServer(async (req, res) => {
           latest:
             state.decisions.latest
         }
+      });
+    }
+
+    // --------------------------------------------------------
+    // READ-ONLY DECISION HISTORY
+    // --------------------------------------------------------
+
+    if (
+      req.method === "GET" &&
+      url.pathname === "/bridge/decisions"
+    ) {
+      if (!bridgeAuthorized(req)) {
+        return sendJson(res, 401, { error: "Unauthorized" });
+      }
+
+      const limit = Math.max(
+        1,
+        Math.min(500, Number(url.searchParams.get("limit")) || 100)
+      );
+
+      return sendJson(res, 200, {
+        execution_enabled: false,
+        count: Math.min(limit, state.decisions.history.length),
+        total_in_memory: state.decisions.history.length,
+        decisions: state.decisions.history.slice(-limit).reverse()
       });
     }
 
