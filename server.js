@@ -2420,6 +2420,21 @@ function renderAdminPage() {
   </div>
 
   <div class="card">
+    <h2>Claude Decision History</h2>
+    <p>
+      Read-only in-memory history. Newest first; up to 500 decisions.
+      This view cannot authorize or submit orders.
+    </p>
+    <pre>${escapeHtml(
+      JSON.stringify(
+        state.decisions.history.slice().reverse(),
+        null,
+        2
+      )
+    )}</pre>
+  </div>
+
+  <div class="card">
     <h2>Bridge Statistics</h2>
     <pre>${escapeHtml(
       JSON.stringify(
