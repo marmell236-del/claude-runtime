@@ -898,6 +898,15 @@ const DECISION_METRICS_PATH = path.join(
   "bridge-decision-metrics.jsonl"
 );
 
+// Protected explanation journal. Never log this text to Railway stdout.
+const DECISION_REASONS_PATH = path.join("/root/.claude", "bridge-decision-reasons.jsonl");
+function compactDecisionText(value) {
+  return typeof value === "string" ? value.slice(0, 1600) : "";
+}
+function compactDecisionList(value) {
+  return Array.isArray(value) ? value.slice(0, 12).filter(x => typeof x === "string").map(x => x.slice(0, 600)) : [];
+}
+
 function recordDecision(decision) {
   if (!decision || !decision.symbol) return;
   state.decisions.history.push(JSON.parse(JSON.stringify(decision)));
@@ -924,6 +933,23 @@ function recordDecision(decision) {
       JSON.stringify(metrics) + "\n",
       { mode: 0o600 }
     );
+    // Separate private explanation record; no account context, balances or raw tool output.
+    const reasons = {
+      created_at: metrics.created_at,
+      symbol: metrics.symbol,
+      decision: metrics.decision,
+      confidence: metrics.confidence,
+      summary: compactDecisionText(decision.summary),
+      positive_factors: compactDecisionList(decision.positive_factors),
+      risk_factors: compactDecisionList(decision.risk_factors),
+      missing_information: compactDecisionList(decision.missing_information),
+      invalidation_conditions: compactDecisionList(decision.invalidation_conditions)
+    };
+    try {
+      fs.appendFileSync(DECISION_REASONS_PATH, JSON.stringify(reasons) + "\n", { mode: 0o600 });
+    } catch (reasonError) {
+      console.error("[decision-reasons-write-failed]", String(reasonError.message || reasonError));
+    }
     // Read-only, privacy-minimized observability via Railway logs.
     // Log only after durable append succeeds; never expose admin credentials.
     console.log("[decision-metrics-saved]", JSON.stringify(metrics));
@@ -3060,6 +3086,38 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         read_only: true,
         execution_enabled: false,
+        count: entries.length,
+        latest: entries.length ? entries[entries.length - 1] : null,
+        entries
+      });
+    }
+
+    // --------------------------------------------------------
+    // Authenticated read-only explanations (private volume, never public logs).
+    if (req.method === "GET" && url.pathname === "/admin/decision-reasons.json") {
+      if (!isAdmin(req)) return sendJson(res, 401, { error: "Unauthorized" });
+      const limit = Math.min(100, Math.max(1, Number.parseInt(url.searchParams.get("limit") || "25", 10) || 25));
+      let entries = [];
+      try {
+        if (fs.existsSync(DECISION_REASONS_PATH)) {
+          const stat = fs.statSync(DECISION_REASONS_PATH);
+          const size = Math.min(stat.size, 1024 * 1024);
+          const fd = fs.openSync(DECISION_REASONS_PATH, "r");
+          try {
+            const buffer = Buffer.alloc(size);
+            fs.readSync(fd, buffer, 0, size, stat.size - size);
+            const lines = buffer.toString("utf8").split("\n");
+            if (stat.size > size) lines.shift();
+            entries = lines.filter(Boolean).slice(-limit).flatMap(line => {
+              try { return [JSON.parse(line)]; } catch (_) { return []; }
+            });
+          } finally { fs.closeSync(fd); }
+        }
+      } catch (_) {
+        return sendJson(res, 503, { error: "Decision explanations unavailable" });
+      }
+      return sendJson(res, 200, {
+        read_only: true,
         count: entries.length,
         latest: entries.length ? entries[entries.length - 1] : null,
         entries
