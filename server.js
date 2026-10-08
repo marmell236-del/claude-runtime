@@ -2754,6 +2754,19 @@ function readResearchDecisionMetrics(limit) {
   });
 }
 
+    if (req.method === "GET" && url.pathname === "/bridge/research-signals") {
+      if (!RESEARCH_READ_TOKEN || !timingSafeEqualString((req.headers.authorization || "").replace(/^Bearer /, ""), RESEARCH_READ_TOKEN)) return sendJson(res, 401, { error: "Unauthorized" });
+      const file = "/root/.claude/research-signals.jsonl";
+      let signals = [];
+      if (fs.existsSync(file)) {
+        const lines = fs.readFileSync(file, "utf8").trim().split("\n");
+        signals = lines.slice(-250).flatMap(line => {
+          try { return [JSON.parse(line)]; } catch { return []; }
+        });
+      }
+      return sendJson(res, 200, { research_only: true, count: signals.length, signals });
+    }
+
     // Privacy-minimized, authenticated research decision feed.
     if (req.method === "GET" && url.pathname === "/bridge/research-decisions") {
       if (!RESEARCH_READ_TOKEN || !timingSafeEqualString((req.headers.authorization || "").replace(/^Bearer /, ""), RESEARCH_READ_TOKEN)) return sendJson(res, 401, { error: "Unauthorized" });
