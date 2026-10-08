@@ -502,9 +502,20 @@ function validateSignal(raw) {
     throw new Error("Invalid market_session");
   }
 
+  // Extended-hours classifications are research-only, never trade entries.
+  const extendedResearchLifecycle =
+    lifecycle === "EXTENDED_QUALIFIED" &&
+    String(raw.strategy || "").trim().toUpperCase() ===
+      "MICRO_V4_EXTENDED" &&
+    raw.research_only === true &&
+    raw.eligible_for_execution === false &&
+    raw.execution_enabled === false &&
+    marketSession !== "regular";
+
   if (
     lifecycle &&
-    !allowedLifecycle.has(lifecycle)
+    !allowedLifecycle.has(lifecycle) &&
+    !extendedResearchLifecycle
   ) {
     throw new Error("Invalid lifecycle");
   }
