@@ -1546,6 +1546,21 @@ function acceptBridgeSignal(raw) {
     new Date().toISOString();
 
   state.bridge.latestSignal = signal;
+  try {
+    fs.appendFileSync("/root/.claude/research-signals.jsonl", JSON.stringify({
+      research_signal_id: signal.research_signal_id,
+      symbol: signal.symbol,
+      bridge_received_at: signal.bridge_received_at,
+      scanner_generated_at: signal.scanner_generated_at || null,
+      score: signal.score,
+      lifecycle: signal.lifecycle,
+      market_session: signal.market_session,
+      price: signal.price ?? null
+    }) + "\n");
+  } catch (error) {
+    console.error("[research-signal-write-failed]", String(error.message || error));
+  }
+
 
   if (signal.strategy === "MICRO_V4") {
     state.bridge.microV4.received++;
