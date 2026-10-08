@@ -2723,6 +2723,23 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    // Privacy-minimized, authenticated research decision feed.
+    if (req.method === "GET" && url.pathname === "/bridge/research-decisions") {
+      if (!bridgeAuthorized(req)) return sendJson(res, 401, { error: "Unauthorized" });
+      const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 250));
+      const decisions = state.decisions.history.slice(-limit).map(d => ({
+        created_at: d.created_at || null,
+        symbol: d.symbol || null,
+        decision: d.decision || null,
+        confidence: Number.isFinite(Number(d.confidence)) ? Number(d.confidence) : null,
+        scanner_score: Number.isFinite(Number(d.scanner_score)) ? Number(d.scanner_score) : null,
+        scanner_lifecycle: d.scanner_lifecycle || null,
+        market_session: d.market_session || null,
+        execution_enabled: false
+      }));
+      return sendJson(res, 200, { research_only: true, count: decisions.length, decisions });
+    }
+
     // --------------------------------------------------------
     // RECEIVE SHADOW INTELLIGENCE HEARTBEAT (READ-ONLY)
     // --------------------------------------------------------
