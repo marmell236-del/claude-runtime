@@ -924,6 +924,9 @@ function recordDecision(decision) {
       JSON.stringify(metrics) + "\n",
       { mode: 0o600 }
     );
+    // Read-only, privacy-minimized observability via Railway logs.
+    // Log only after durable append succeeds; never expose admin credentials.
+    console.log("[decision-metrics-saved]", JSON.stringify(metrics));
   } catch (error) {
     console.error("[decision-metrics-write-failed]", String(error.message || error));
   }
