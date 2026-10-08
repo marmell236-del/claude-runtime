@@ -2,6 +2,8 @@ const http = require("http");
 const { spawn, execFile } = require("child_process");
 const { URL } = require("url");
 const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
 
 // ============================================================
 // CLAUDE ↔ ROBINHOOD BRIDGE V3
@@ -889,11 +891,41 @@ Return ONLY valid JSON:
 // DRY-RUN DECISION ENGINE
 // ============================================================
 
+// Append privacy-minimized decision metrics to Railway's mounted volume.
+// Keep the existing in-memory full decision history unchanged.
+const DECISION_METRICS_PATH = path.join(
+  "/root/.claude",
+  "bridge-decision-metrics.jsonl"
+);
+
 function recordDecision(decision) {
   if (!decision || !decision.symbol) return;
   state.decisions.history.push(JSON.parse(JSON.stringify(decision)));
   if (state.decisions.history.length > 500) {
     state.decisions.history.splice(0, state.decisions.history.length - 500);
+  }
+
+  // Do not persist account balances, research text, tokens, or order details.
+  const metrics = {
+    created_at: decision.created_at || new Date().toISOString(),
+    symbol: String(decision.symbol),
+    decision: String(decision.decision || "UNKNOWN"),
+    confidence: Number.isFinite(Number(decision.confidence))
+      ? Number(decision.confidence) : null,
+    scanner_score: Number.isFinite(Number(decision.scanner_score))
+      ? Number(decision.scanner_score) : null,
+    scanner_lifecycle: decision.scanner_lifecycle || null,
+    market_session: decision.market_session || null,
+    execution_enabled: false
+  };
+  try {
+    fs.appendFileSync(
+      DECISION_METRICS_PATH,
+      JSON.stringify(metrics) + "\\n",
+      { mode: 0o600 }
+    );
+  } catch (error) {
+    console.error("[decision-metrics-write-failed]", String(error.message || error));
   }
 }
 
