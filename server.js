@@ -3047,7 +3047,7 @@ const server = http.createServer(async (req, res) => {
             const size = Math.min(maxBytes, stat.size);
             const buffer = Buffer.alloc(size);
             fs.readSync(fd, buffer, 0, size, stat.size - size);
-            const lines = buffer.toString("utf8").split("\\n");
+            const lines = buffer.toString("utf8").split("\n");
             if (stat.size > size) lines.shift(); // discard partial first line
             entries = lines.filter(Boolean).slice(-limit).flatMap(line => {
               try { return [JSON.parse(line)]; } catch (_) { return []; }
