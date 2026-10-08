@@ -566,6 +566,7 @@ function validateSignal(raw) {
 
   signal.bridge_received_at =
     new Date().toISOString();
+  signal.research_signal_id = crypto.randomUUID();
 
   // Bridge remains authoritative.
   signal.execution_enabled = false;
@@ -926,6 +927,7 @@ function recordDecision(decision) {
       ? Number(decision.scanner_score) : null,
     scanner_lifecycle: decision.scanner_lifecycle || null,
     market_session: decision.market_session || null,
+    research_signal_id: decision.research_signal_id || null,
     execution_enabled: false
   };
   try {
@@ -1050,6 +1052,7 @@ async function runDryDecision(signal) {
       created_at: new Date().toISOString()
     };
 
+    state.decisions.latest.research_signal_id = signal.research_signal_id || null;
     recordDecision(state.decisions.latest);
     state.decisions.completed++;
     return;
@@ -1179,7 +1182,8 @@ async function runDryDecision(signal) {
       }
 
       state.execution.latestProposal = proposal;
-      recordDecision(state.decisions.latest);
+      state.decisions.latest.research_signal_id = signal.research_signal_id || null;
+    recordDecision(state.decisions.latest);
       state.decisions.completed++;
     } catch (error) {
       state.decisions.failed++;
@@ -1192,7 +1196,8 @@ async function runDryDecision(signal) {
         execution_enabled: false,
         created_at: new Date().toISOString()
       };
-      recordDecision(state.decisions.latest);
+      state.decisions.latest.research_signal_id = signal.research_signal_id || null;
+    recordDecision(state.decisions.latest);
     } finally {
       state.decisions.running = false;
     }
@@ -1494,6 +1499,7 @@ ${JSON.stringify(enrichedSignal, null, 2)}
         proposal;
     }
 
+    state.decisions.latest.research_signal_id = signal.research_signal_id || null;
     recordDecision(state.decisions.latest);
     state.decisions.completed++;
   } catch (error) {
@@ -1508,6 +1514,7 @@ ${JSON.stringify(enrichedSignal, null, 2)}
       created_at: new Date().toISOString(),
       execution_enabled: false
     };
+    state.decisions.latest.research_signal_id = signal.research_signal_id || null;
     recordDecision(state.decisions.latest);
   } finally {
     state.decisions.running = false;
@@ -2744,6 +2751,7 @@ function readResearchDecisionMetrics(limit) {
         scanner_score: Number.isFinite(Number(d.scanner_score)) ? Number(d.scanner_score) : null,
         scanner_lifecycle: d.scanner_lifecycle || null,
         market_session: d.market_session || null,
+        research_signal_id: d.research_signal_id || null,
         execution_enabled: false
       }));
       return sendJson(res, 200, { research_only: true, count: decisions.length, decisions });
