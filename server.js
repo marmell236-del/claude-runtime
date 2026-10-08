@@ -1040,8 +1040,8 @@ async function runDryDecision(signal) {
 
     state.execution.latestProposal = {
       symbol: signal.symbol,
-      decision,
-      confidence,
+      decision: state.decisions.latest.decision,
+      confidence: state.decisions.latest.confidence,
       max_position_dollars:
         gateResult.proposedMaxPositionDollars,
       approved: gateResult.approved,
