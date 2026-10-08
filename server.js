@@ -1916,12 +1916,36 @@ function submitRobinhoodCallback(callbackUrl) {
     );
   }
 
+  // A valid-looking localhost URL is not necessarily the OAuth redirect.
+  // Fail early with actionable guidance, without logging sensitive values.
+  if (
+    parsed.hostname !== "localhost" &&
+    parsed.hostname !== "127.0.0.1"
+  ) {
+    throw new Error(
+      "Expected the localhost redirect URL from the browser address bar."
+    );
+  }
+
+  if (!parsed.searchParams.has("code")) {
+    throw new Error(
+      "Callback URL is missing the authorization code. Copy the full browser address."
+    );
+  }
+
+  if (!parsed.searchParams.has("state")) {
+    throw new Error(
+      "Callback URL is missing the OAuth state parameter. Restart authentication and use its latest authorization link."
+    );
+  }
+
+  // Never print or persist the callback URL: it contains one-time credentials.
   robinhoodAuthProcess.stdin.write(
     value + "\n"
   );
 
   appendRobinhoodAuthOutput(
-    "\nCallback URL submitted.\n"
+    "\nCallback URL submitted to Claude. Awaiting authentication result.\n"
   );
 }
 // ============================================================
