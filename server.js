@@ -3031,6 +3031,42 @@ const server = http.createServer(async (req, res) => {
     }
 
     // --------------------------------------------------------
+    // READ-ONLY DECISION HISTORY (admin session required)
+    // Returns privacy-minimized persisted metrics, including prior restarts.
+    if (req.method === "GET" && url.pathname === "/admin/decision-history.json") {
+      if (!isAdmin(req)) return sendJson(res, 401, { error: "Unauthorized" });
+      const limit = Math.min(200, Math.max(1, Number.parseInt(url.searchParams.get("limit") || "50", 10) || 50));
+      let entries = [];
+      try {
+        if (fs.existsSync(DECISION_METRICS_PATH)) {
+          const stat = fs.statSync(DECISION_METRICS_PATH);
+          // Bounded read: do not load unlimited history into memory.
+          const maxBytes = 1024 * 1024;
+          const fd = fs.openSync(DECISION_METRICS_PATH, "r");
+          try {
+            const size = Math.min(maxBytes, stat.size);
+            const buffer = Buffer.alloc(size);
+            fs.readSync(fd, buffer, 0, size, stat.size - size);
+            const lines = buffer.toString("utf8").split("\\n");
+            if (stat.size > size) lines.shift(); // discard partial first line
+            entries = lines.filter(Boolean).slice(-limit).flatMap(line => {
+              try { return [JSON.parse(line)]; } catch (_) { return []; }
+            });
+          } finally { fs.closeSync(fd); }
+        }
+      } catch (error) {
+        return sendJson(res, 503, { error: "Decision history unavailable" });
+      }
+      return sendJson(res, 200, {
+        read_only: true,
+        execution_enabled: false,
+        count: entries.length,
+        latest: entries.length ? entries[entries.length - 1] : null,
+        entries
+      });
+    }
+
+    // --------------------------------------------------------
     // ADMIN JSON STATUS
     // --------------------------------------------------------
 
