@@ -15,6 +15,7 @@ const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || "").trim();
 const SCANNER_BRIDGE_TOKEN = (
   process.env.SCANNER_BRIDGE_TOKEN || ""
 ).trim();
+const RESEARCH_READ_TOKEN = (process.env.RESEARCH_READ_TOKEN || "").trim();
 
 if (!ADMIN_PASSWORD) {
   console.error("ADMIN_PASSWORD is required.");
@@ -2725,7 +2726,7 @@ const server = http.createServer(async (req, res) => {
 
     // Privacy-minimized, authenticated research decision feed.
     if (req.method === "GET" && url.pathname === "/bridge/research-decisions") {
-      if (!bridgeAuthorized(req)) return sendJson(res, 401, { error: "Unauthorized" });
+      if (!RESEARCH_READ_TOKEN || !timingSafeEqualString((req.headers.authorization || "").replace(/^Bearer /, ""), RESEARCH_READ_TOKEN)) return sendJson(res, 401, { error: "Unauthorized" });
       const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 250));
       const decisions = state.decisions.history.slice(-limit).map(d => ({
         created_at: d.created_at || null,
