@@ -921,7 +921,7 @@ function recordDecision(decision) {
   try {
     fs.appendFileSync(
       DECISION_METRICS_PATH,
-      JSON.stringify(metrics) + "\\n",
+      JSON.stringify(metrics) + "\n",
       { mode: 0o600 }
     );
   } catch (error) {
