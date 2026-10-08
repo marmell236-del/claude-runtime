@@ -2724,11 +2724,19 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+function readResearchDecisionMetrics(limit) {
+  if (!fs.existsSync(DECISION_METRICS_PATH)) return state.decisions.history.slice(-limit);
+  const lines = fs.readFileSync(DECISION_METRICS_PATH, "utf8").trim().split("\n");
+  return lines.slice(-limit).flatMap(line => {
+    try { return [JSON.parse(line)]; } catch { return []; }
+  });
+}
+
     // Privacy-minimized, authenticated research decision feed.
     if (req.method === "GET" && url.pathname === "/bridge/research-decisions") {
       if (!RESEARCH_READ_TOKEN || !timingSafeEqualString((req.headers.authorization || "").replace(/^Bearer /, ""), RESEARCH_READ_TOKEN)) return sendJson(res, 401, { error: "Unauthorized" });
       const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 250));
-      const decisions = state.decisions.history.slice(-limit).map(d => ({
+      const decisions = readResearchDecisionMetrics(limit).map(d => ({
         created_at: d.created_at || null,
         symbol: d.symbol || null,
         decision: d.decision || null,
